@@ -1,0 +1,48 @@
+# ============ Secrets ============
+.env
+config.enc
+master.key
+
+# ============ Runtime Data ============
+data/
+logs/
+aktivitas.log
+mute.lock
+backup_*.zip
+*.rsc
+*.backup
+
+# ============ Certificates / Keys ============
+certs/*.pem
+certs/*.crt
+certs/*.cer
+certs/*.key
+certs/*.p12
+certs/*.pfx
+
+# ============ Python ============
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# ============ Testing ============
+.pytest_cache/
+test_downtime.db
+htmlcov/
+.coverage
+
+# ============ IDE ============
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# ============ Private Operational Docs ============
+HANDOVER_*.md
+HANDOVER_OPERATOR_*.md
+DEEP_ANALISIS_*.md
+AUDIT_*.md
