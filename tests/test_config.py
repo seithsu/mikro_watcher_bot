@@ -228,6 +228,14 @@ class TestConfigParsing:
             "\n".join([
                 "ADMIN_IDS=111,222",
                 "MIKROTIK_IP=192.0.2.10",
+                "TELEGRAM_CONNECT_TIMEOUT=15",
+                "TELEGRAM_READ_TIMEOUT=25",
+                "TELEGRAM_WRITE_TIMEOUT=30",
+                "TELEGRAM_POOL_TIMEOUT=12",
+                "TELEGRAM_GET_UPDATES_READ_TIMEOUT=45",
+                "TELEGRAM_CONNECTION_POOL_SIZE=40",
+                "TELEGRAM_NETWORK_LOG_WINDOW_SEC=600",
+                "TELEGRAM_NETWORK_LOG_COOLDOWN_SEC=180",
                 "MONITOR_IGNORE_IFACE=ether3,ether4",
                 "DNS_CHECK_DOMAIN=google.com,cloudflare.com",
                 "GW_WAN=192.0.2.1",
@@ -249,6 +257,14 @@ class TestConfigParsing:
         assert cfg.ADMIN_IDS == [111, 222]
         assert cfg.CHAT_ID == 111
         assert cfg.MIKROTIK_IP == "192.0.2.10"
+        assert cfg.TELEGRAM_CONNECT_TIMEOUT == 15.0
+        assert cfg.TELEGRAM_READ_TIMEOUT == 25.0
+        assert cfg.TELEGRAM_WRITE_TIMEOUT == 30.0
+        assert cfg.TELEGRAM_POOL_TIMEOUT == 12.0
+        assert cfg.TELEGRAM_GET_UPDATES_READ_TIMEOUT == 45.0
+        assert cfg.TELEGRAM_CONNECTION_POOL_SIZE == 40
+        assert cfg.TELEGRAM_NETWORK_LOG_WINDOW_SEC == 600
+        assert cfg.TELEGRAM_NETWORK_LOG_COOLDOWN_SEC == 180
         assert cfg.MONITOR_IGNORE_IFACE == {"ether3", "ether4"}
         assert cfg.DNS_CHECK_DOMAINS == ["google.com", "cloudflare.com"]
         assert cfg.CRITICAL_DEVICES_FALLBACK == {"IGD": "192.0.2.50", "POLI": "192.0.2.51"}
@@ -380,6 +396,14 @@ class TestConfigParsing:
                     "MIKROTIK_MAX_CONNECTIONS=9999",
                     "MIKROTIK_RECONNECT_BASE_BACKOFF=0",
                     "MIKROTIK_RECONNECT_MAX_BACKOFF=99999",
+                    "TELEGRAM_CONNECT_TIMEOUT=0",
+                    "TELEGRAM_READ_TIMEOUT=9999",
+                    "TELEGRAM_WRITE_TIMEOUT=9999",
+                    "TELEGRAM_POOL_TIMEOUT=0",
+                    "TELEGRAM_GET_UPDATES_READ_TIMEOUT=9999",
+                    "TELEGRAM_CONNECTION_POOL_SIZE=0",
+                    "TELEGRAM_NETWORK_LOG_WINDOW_SEC=10",
+                    "TELEGRAM_NETWORK_LOG_COOLDOWN_SEC=5",
                     "ASYNC_THREAD_WORKERS=1",
                     "MIKROTIK_CONNECTION_MAX_AGE_SEC=999999",
                     "MONITOR_VPN_ENABLED=no",
@@ -414,6 +438,14 @@ class TestConfigParsing:
         assert cfg.MIKROTIK_TLS_VERIFY is False
         assert cfg.MIKROTIK_FTP_TLS is True
         assert cfg.MIKROTIK_FTP_ALLOW_INSECURE is True
+        assert cfg.TELEGRAM_CONNECT_TIMEOUT >= 1
+        assert cfg.TELEGRAM_READ_TIMEOUT <= 300
+        assert cfg.TELEGRAM_WRITE_TIMEOUT <= 300
+        assert cfg.TELEGRAM_POOL_TIMEOUT >= 1
+        assert cfg.TELEGRAM_GET_UPDATES_READ_TIMEOUT <= 300
+        assert cfg.TELEGRAM_CONNECTION_POOL_SIZE >= 1
+        assert cfg.TELEGRAM_NETWORK_LOG_WINDOW_SEC >= 60
+        assert cfg.TELEGRAM_NETWORK_LOG_COOLDOWN_SEC >= 30
         assert cfg.MONITOR_VPN_ENABLED is False
         assert cfg.MONITOR_VPN_IGNORE_NAMES == {"vpn-a", "vpn-b"}
         assert cfg.SERVERS_FALLBACK == {"SRV1": "192.168.3.10"}

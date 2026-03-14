@@ -16,7 +16,10 @@ logger = logging.getLogger(__name__)
 _LOG_CACHE = []
 _LOG_CACHE_TS = 0.0
 _LOG_CACHE_TTL = 8.0
+_LOG_CACHE_STALE_TTL = 300.0
 _LOG_CACHE_DEFAULT_CAP = 300
+_LOG_FETCH_LAST_ERROR_TS = 0.0
+_LOG_FETCH_ERROR_BACKOFF_SEC = 45.0
 
 
 def _normalize_device_label(value):
@@ -77,6 +80,20 @@ def _extract_queue_target_ip(queue_item):
     except ValueError:
         return None
     return ip
+
+
+def _clone_log_tail(entries, req_lines):
+    """Return salinan tail log agar cache global tidak termodifikasi caller."""
+    subset = list(entries[-req_lines:]) if entries else []
+    return [dict(item) for item in subset if isinstance(item, dict)]
+
+
+def _fetch_router_log_entries(api):
+    """Ambil log dengan payload minimum; fallback ke cmd print jika API path tidak support select."""
+    log_path = api.path('log')
+    if hasattr(log_path, 'select'):
+        return list(log_path.select('time', 'topics', 'message'))
+    return list(log_path('print', **{'.proplist': 'time,topics,message'}))
 
 
 @cached(ttl=5)
@@ -264,22 +281,44 @@ def get_arp_anomalies(critical_macs):
 @with_retry
 def get_mikrotik_log(lines=20):
     """Ambil tail log router dengan payload minimum + cache pendek."""
-    global _LOG_CACHE, _LOG_CACHE_TS
+    global _LOG_CACHE, _LOG_CACHE_TS, _LOG_FETCH_LAST_ERROR_TS
     req_lines = max(1, int(lines))
     now = time.time()
 
     # Cache pendek untuk mencegah query berulang dari task monitor + command bot.
     if _LOG_CACHE and (now - _LOG_CACHE_TS) <= _LOG_CACHE_TTL and req_lines <= len(_LOG_CACHE):
-        return _LOG_CACHE[-req_lines:]
+        return _clone_log_tail(_LOG_CACHE, req_lines)
+
+    # Jika fetch sebelumnya baru gagal, tahan retry agresif dan pakai stale cache sementara.
+    if _LOG_CACHE and (now - _LOG_FETCH_LAST_ERROR_TS) <= _LOG_FETCH_ERROR_BACKOFF_SEC:
+        stale_age = now - _LOG_CACHE_TS
+        if stale_age <= _LOG_CACHE_STALE_TTL:
+            logger.debug(
+                "get_mikrotik_log memakai stale cache age=%.1fs karena backoff error aktif.",
+                stale_age,
+            )
+            return _clone_log_tail(_LOG_CACHE, req_lines)
 
     api = pool.get_api()
     try:
-        all_logs = list(api.path('log')('print', **{'.proplist': 'time,topics,message'}))
-    except Exception as e:
-        logger.debug("Fallback get_mikrotik_log setelah print gagal: %s", e)
+        all_logs = _fetch_router_log_entries(api)
+    except Exception as first_error:
+        logger.debug("Fallback get_mikrotik_log setelah fetch minimal gagal: %s", first_error)
         pool.reset()
         api = pool.get_api()
-        all_logs = list(api.path('log'))
+        try:
+            all_logs = _fetch_router_log_entries(api)
+        except Exception as second_error:
+            _LOG_FETCH_LAST_ERROR_TS = now
+            stale_age = now - _LOG_CACHE_TS if _LOG_CACHE_TS else None
+            if _LOG_CACHE and stale_age is not None and stale_age <= _LOG_CACHE_STALE_TTL:
+                logger.warning(
+                    "get_mikrotik_log gagal, memakai stale cache age=%.1fs: %s",
+                    stale_age,
+                    second_error,
+                )
+                return _clone_log_tail(_LOG_CACHE, req_lines)
+            raise second_error from first_error
 
     # Normalize: pastikan setiap entry punya 'topics', 'message', 'time'
     normalized = []
@@ -298,8 +337,9 @@ def get_mikrotik_log(lines=20):
         normalized = normalized[-cache_cap:]
     _LOG_CACHE = normalized
     _LOG_CACHE_TS = now
+    _LOG_FETCH_LAST_ERROR_TS = 0.0
 
-    return normalized[-req_lines:] if len(normalized) > req_lines else normalized
+    return _clone_log_tail(normalized, req_lines)
 
 
 @cached(ttl=300)

@@ -182,6 +182,49 @@ async def test_error_handler_ignores_telegram_network_glitch(monkeypatch):
     logger.warning.assert_called_once()
 
 
+def test_build_telegram_request_uses_cfg(monkeypatch):
+    captured = {}
+
+    class FakeRequest:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    monkeypatch.setattr(bot, "HTTPXRequest", FakeRequest)
+    monkeypatch.setattr(bot.cfg, "TELEGRAM_CONNECTION_POOL_SIZE", 48, raising=False)
+    monkeypatch.setattr(bot.cfg, "TELEGRAM_CONNECT_TIMEOUT", 12.0, raising=False)
+    monkeypatch.setattr(bot.cfg, "TELEGRAM_WRITE_TIMEOUT", 18.0, raising=False)
+    monkeypatch.setattr(bot.cfg, "TELEGRAM_POOL_TIMEOUT", 9.0, raising=False)
+
+    req = bot._build_telegram_request(33.0)
+
+    assert isinstance(req, FakeRequest)
+    assert captured == {
+        "connection_pool_size": 48,
+        "connect_timeout": 12.0,
+        "read_timeout": 33.0,
+        "write_timeout": 18.0,
+        "pool_timeout": 9.0,
+    }
+
+
+def test_log_telegram_network_glitch_throttles_repeated_dns(monkeypatch):
+    logger = MagicMock()
+    monkeypatch.setattr(bot, "logger", logger)
+    monkeypatch.setattr(bot.cfg, "TELEGRAM_NETWORK_LOG_WINDOW_SEC", 300, raising=False)
+    monkeypatch.setattr(bot.cfg, "TELEGRAM_NETWORK_LOG_COOLDOWN_SEC", 120, raising=False)
+    bot._TELEGRAM_GLITCH_STATE.update({"kind": "", "window_start": 0.0, "count": 0, "last_log": 0.0})
+
+    ticks = iter([1000.0, 1005.0, 1131.0])
+    monkeypatch.setattr(bot.time, "time", lambda: next(ticks))
+
+    assert bot._log_telegram_network_glitch("getaddrinfo failed") is True
+    assert bot._log_telegram_network_glitch("getaddrinfo failed") is True
+    assert bot._log_telegram_network_glitch("getaddrinfo failed") is True
+
+    assert logger.warning.call_count == 2
+    assert "DNS glitch" in logger.warning.call_args_list[0][0][0]
+
+
 @pytest.mark.asyncio
 async def test_error_handler_logs_debug_when_reply_fails(monkeypatch):
     msg = MagicMock()
@@ -278,11 +321,21 @@ def test_main_builds_handlers_and_runs_polling(monkeypatch):
         def __init__(self, app):
             self.app = app
             self.token_value = None
+            self.request_value = None
+            self.get_updates_request_value = None
             self.post_init_fn = None
             self.post_shutdown_fn = None
 
         def token(self, value):
             self.token_value = value
+            return self
+
+        def request(self, value):
+            self.request_value = value
+            return self
+
+        def get_updates_request(self, value):
+            self.get_updates_request_value = value
             return self
 
         def post_init(self, fn):
@@ -307,6 +360,7 @@ def test_main_builds_handlers_and_runs_polling(monkeypatch):
     monkeypatch.setattr(bot, "CallbackQueryHandler", lambda *a, **k: ("cb", a, k))
     monkeypatch.setattr(bot, "CommandHandler", lambda *a, **k: ("cmd", a, k))
     monkeypatch.setattr(bot, "MessageHandler", lambda *a, **k: ("msg", a, k))
+    monkeypatch.setattr(bot, "_build_telegram_request", lambda read_timeout: {"read_timeout": read_timeout})
     monkeypatch.setattr(bot.cfg, "MIKROTIK_USE_SSL", False, raising=False)
     monkeypatch.setattr(bot.cfg, "MIKROTIK_TLS_VERIFY", True, raising=False)
     monkeypatch.setattr(bot.cfg, "DAILY_REPORT_HOUR", 7, raising=False)
@@ -314,10 +368,14 @@ def test_main_builds_handlers_and_runs_polling(monkeypatch):
     monkeypatch.setattr(bot.cfg, "RATE_LIMIT_PER_MINUTE", 20, raising=False)
     monkeypatch.setattr(bot.cfg, "REBOOT_COOLDOWN", 300, raising=False)
     monkeypatch.setattr(bot.cfg, "ADMIN_IDS", [111], raising=False)
+    monkeypatch.setattr(bot.cfg, "TELEGRAM_READ_TIMEOUT", 20.0, raising=False)
+    monkeypatch.setattr(bot.cfg, "TELEGRAM_GET_UPDATES_READ_TIMEOUT", 35.0, raising=False)
 
     bot.main()
 
     assert fake_builder.token_value == "123:TEST_TOKEN"
+    assert fake_builder.request_value == {"read_timeout": 20.0}
+    assert fake_builder.get_updates_request_value == {"read_timeout": 35.0}
     assert fake_builder.post_init_fn is bot.post_init
     assert fake_builder.post_shutdown_fn is bot.post_shutdown
     assert len(fake_app.handlers) > 30

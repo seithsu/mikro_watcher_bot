@@ -1,6 +1,7 @@
 import pytest
 from unittest.mock import patch, MagicMock
 from datetime import datetime
+import time
 
 @patch('mikrotik.network.pool.get_api')
 class TestNetwork:
@@ -59,6 +60,60 @@ class TestNetwork:
         assert result['tx_bps'] == 16000
         assert result['rx_bytes'] == 1024
         assert result['tx_bytes'] == 2048
+
+    def test_get_mikrotik_log_uses_select_minimal_payload(self, mock_get_api, monkeypatch):
+        import mikrotik.network as network
+
+        log_path = MagicMock()
+        log_path.select.return_value = iter([
+            {'time': '10:00:00', 'topics': ['system', 'info'], 'message': 'ok'},
+        ])
+        mock_api = MagicMock()
+        mock_api.path.return_value = log_path
+        mock_get_api.return_value = mock_api
+
+        monkeypatch.setattr(network, "_LOG_CACHE", [], raising=False)
+        monkeypatch.setattr(network, "_LOG_CACHE_TS", 0.0, raising=False)
+        monkeypatch.setattr(network, "_LOG_FETCH_LAST_ERROR_TS", 0.0, raising=False)
+
+        result = network.get_mikrotik_log.__wrapped__(1)
+
+        assert result == [{'time': '10:00:00', 'topics': 'system,info', 'message': 'ok'}]
+        log_path.select.assert_called_once_with('time', 'topics', 'message')
+
+    def test_get_mikrotik_log_uses_stale_cache_after_fetch_failure(self, mock_get_api, monkeypatch):
+        import mikrotik.network as network
+
+        cache = [{'time': '09:59:59', 'topics': 'system,error', 'message': 'cached'}]
+        log_path = MagicMock()
+        log_path.select.side_effect = RuntimeError("timeout")
+        mock_api = MagicMock()
+        mock_api.path.return_value = log_path
+        mock_get_api.return_value = mock_api
+
+        monkeypatch.setattr(network, "_LOG_CACHE", cache, raising=False)
+        monkeypatch.setattr(network, "_LOG_CACHE_TS", time.time() - 30, raising=False)
+        monkeypatch.setattr(network, "_LOG_FETCH_LAST_ERROR_TS", 0.0, raising=False)
+        monkeypatch.setattr(network.pool, "reset", MagicMock())
+
+        result = network.get_mikrotik_log.__wrapped__(1)
+
+        assert result == cache
+        assert mock_get_api.call_count == 2
+        network.pool.reset.assert_called_once()
+
+    def test_get_mikrotik_log_respects_recent_error_backoff(self, mock_get_api, monkeypatch):
+        import mikrotik.network as network
+
+        cache = [{'time': '09:59:59', 'topics': 'system,error', 'message': 'cached'}]
+        monkeypatch.setattr(network, "_LOG_CACHE", cache, raising=False)
+        monkeypatch.setattr(network, "_LOG_CACHE_TS", time.time(), raising=False)
+        monkeypatch.setattr(network, "_LOG_FETCH_LAST_ERROR_TS", time.time(), raising=False)
+
+        result = network.get_mikrotik_log.__wrapped__(1)
+
+        assert result == cache
+        mock_get_api.assert_not_called()
 
     def test_monitored_queues_skip_disabled_and_invalid_target(self, mock_get_api):
         from mikrotik.network import _get_all_monitored_queues

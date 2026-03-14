@@ -11,6 +11,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, time as dtime
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand
+from telegram.request import HTTPXRequest
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -38,6 +39,12 @@ from core.runtime_guard import install_global_exception_hooks
 
 logger = logging.getLogger(__name__)
 _default_executor = None
+_TELEGRAM_GLITCH_STATE = {
+    "kind": "",
+    "window_start": 0.0,
+    "count": 0,
+    "last_log": 0.0,
+}
 
 from handlers.utils import get_back_button, _check_access, read_state_json
 from core import database
@@ -74,6 +81,71 @@ from handlers.report import (
 from handlers.charts import cmd_chart, callback_chart, callback_back_to_chart, callback_back_to_start
 
 # ============ CALLBACK HANDLERS ============
+
+
+def _build_telegram_request(read_timeout):
+    """Bangun HTTPX request dengan timeout eksplisit agar perilaku polling lebih konsisten."""
+    pool_size = max(1, int(getattr(cfg, "TELEGRAM_CONNECTION_POOL_SIZE", 32)))
+    return HTTPXRequest(
+        connection_pool_size=pool_size,
+        connect_timeout=float(getattr(cfg, "TELEGRAM_CONNECT_TIMEOUT", 10.0)),
+        read_timeout=float(read_timeout),
+        write_timeout=float(getattr(cfg, "TELEGRAM_WRITE_TIMEOUT", 20.0)),
+        pool_timeout=float(getattr(cfg, "TELEGRAM_POOL_TIMEOUT", 10.0)),
+    )
+
+
+def _classify_telegram_network_glitch(error_text):
+    """Klasifikasikan error Telegram network agar log lebih spesifik."""
+    text = str(error_text or "").lower()
+    if any(token in text for token in ("getaddrinfo failed", "name resolution", "nodename nor servname")):
+        return "dns"
+    if "query is too old" in text:
+        return "stale-update"
+    if any(token in text for token in ("timedout", "timed out", "timeout")):
+        return "timeout"
+    if any(token in text for token in ("connecterror", "networkerror", "connection")):
+        return "connect"
+    return None
+
+
+def _log_telegram_network_glitch(error_text):
+    """Log network glitch Telegram dengan throttling berbasis window."""
+    kind = _classify_telegram_network_glitch(error_text)
+    if not kind:
+        return False
+
+    now = time.time()
+    window_sec = max(60, int(getattr(cfg, "TELEGRAM_NETWORK_LOG_WINDOW_SEC", 300)))
+    cooldown_sec = max(30, int(getattr(cfg, "TELEGRAM_NETWORK_LOG_COOLDOWN_SEC", 120)))
+    state = _TELEGRAM_GLITCH_STATE
+
+    if kind != state["kind"] or (now - float(state["window_start"])) > window_sec:
+        state["kind"] = kind
+        state["window_start"] = now
+        state["count"] = 0
+        state["last_log"] = 0.0
+
+    state["count"] += 1
+    should_log = state["count"] == 1 or (now - float(state["last_log"])) >= cooldown_sec
+    if should_log:
+        if kind == "dns":
+            logger.warning(
+                "Telegram DNS glitch x%s/%ss: %s",
+                state["count"],
+                window_sec,
+                error_text,
+            )
+        else:
+            logger.warning(
+                "Telegram %s glitch x%s/%ss: %s",
+                kind,
+                state["count"],
+                window_sec,
+                error_text,
+            )
+        state["last_log"] = now
+    return True
 
 
 def _schedule_daily_jobs(app: Application):
@@ -410,12 +482,11 @@ async def post_shutdown(app: Application):
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
     """Global error handler - tangkap semua error yang tidak ter-handle."""
     err_str = str(context.error)
-    
-    # Optimasi Log: Abaikan traceback penuh untuk error koneksi biasa dari Telegram API
-    if any(x in err_str for x in ["NetworkError", "ConnectError", "getaddrinfo failed", "TimedOut", "Query is too old"]):
-        logger.warning(f"Telegram API Glitch/Timeout: {err_str}")
+
+    # Optimasi Log: throttled warning untuk glitch jaringan Telegram yang umum.
+    if _log_telegram_network_glitch(err_str):
         return
-        
+
     logger.error("Exception saat memproses update:", exc_info=context.error)
 
     try:
@@ -461,7 +532,18 @@ def main():
     # Cek log dulu
     rotate_log()
 
-    app = Application.builder().token(TOKEN).post_init(post_init).post_shutdown(post_shutdown).build()
+    builder = Application.builder().token(TOKEN)
+    if hasattr(builder, "request"):
+        builder = builder.request(
+            _build_telegram_request(read_timeout=float(getattr(cfg, "TELEGRAM_READ_TIMEOUT", 20.0)))
+        )
+    if hasattr(builder, "get_updates_request"):
+        builder = builder.get_updates_request(
+            _build_telegram_request(
+                read_timeout=float(getattr(cfg, "TELEGRAM_GET_UPDATES_READ_TIMEOUT", 35.0))
+            )
+        )
+    app = builder.post_init(post_init).post_shutdown(post_shutdown).build()
 
     # Handler Callback Modules
     app.add_handler(CallbackQueryHandler(callback_queue, pattern="^(del_queue|q_)"))
