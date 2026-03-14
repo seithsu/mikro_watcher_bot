@@ -42,6 +42,8 @@ htmlcov/
 *.swo
 
 # ============ Private Operational Docs ============
+*.md
+!README.md
 HANDOVER_*.md
 HANDOVER_OPERATOR_*.md
 DEEP_ANALISIS_*.md

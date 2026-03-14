@@ -204,18 +204,19 @@ async def auto_backup(context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             logger.debug("reload config gagal saat auto_backup: %s", e)
 
-        # Kita backup .rsc karena lebih ringkas dan cross-version
+        # Untuk backup rutin mingguan, prioritaskan export via API.
+        # Jalur ini lebih ringan dan tidak bergantung pada FTP/FTPS router.
         try:
-            filename = await asyncio.to_thread(export_router_backup_ftp, "export")
+            filename = await asyncio.to_thread(export_router_backup, "export")
         except Exception as e:
-            logger.debug("Auto backup FTP export gagal, fallback API: %s", e)
+            logger.debug("Auto backup API export gagal, fallback FTP/FTPS: %s", e)
             filename = None
 
         if not filename:
-             try:
-                 filename = await asyncio.to_thread(export_router_backup, "export")
-             except Exception as e:
-                 logger.debug("Suppressed non-fatal exception: %s", e)
+            try:
+                filename = await asyncio.to_thread(export_router_backup_ftp, "export")
+            except Exception as e:
+                logger.debug("Auto backup FTP/FTPS export gagal: %s", e)
         if filename:
             pesan = f"🗓️ [AUTO-BACKUP]\nBackup Rutin Mingguan Config Router\nBerhasil tersimpan."
             for admin_id in cfg.ADMIN_IDS:

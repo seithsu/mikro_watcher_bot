@@ -47,8 +47,8 @@ class TestWithRetry:
 
     def test_connection_issue_throttles_reset_all(self):
         mock_func = MagicMock(side_effect=[
-            Exception("connection closed"), "ok-1",
-            Exception("connection closed"), "ok-2",
+            Exception("not logged in"), "ok-1",
+            Exception("not logged in"), "ok-2",
         ])
         mock_func.__name__ = "mock_func"
         decorated = with_retry(mock_func)
@@ -87,3 +87,33 @@ class TestWithRetry:
             assert decorated() == "ok-2"
 
         mock_logger.warning.assert_called_once()
+
+    def test_timeout_issue_does_not_trigger_reset_all(self):
+        mock_func = MagicMock(side_effect=[Exception("timed out"), "ok"])
+        mock_func.__name__ = "mock_timeout_reset_scope"
+        decorated = with_retry(mock_func)
+
+        with (
+            patch('time.sleep'),
+            patch('mikrotik.connection.pool.reset') as mock_reset,
+            patch('mikrotik.connection.pool.reset_all') as mock_reset_all,
+        ):
+            assert decorated() == "ok"
+
+        mock_reset.assert_called_once()
+        mock_reset_all.assert_not_called()
+
+    def test_ping_host_session_issue_does_not_trigger_reset_all(self):
+        mock_func = MagicMock(side_effect=[Exception("not logged in"), "ok"])
+        mock_func.__name__ = "ping_host"
+        decorated = with_retry(mock_func)
+
+        with (
+            patch('time.sleep'),
+            patch('mikrotik.connection.pool.reset') as mock_reset,
+            patch('mikrotik.connection.pool.reset_all') as mock_reset_all,
+        ):
+            assert decorated("1.1.1.1", 3) == "ok"
+
+        mock_reset.assert_called_once()
+        mock_reset_all.assert_not_called()

@@ -78,6 +78,76 @@ class TestTaskMonitorLogs:
         from monitor.tasks import get_mikrotik_log
         logs = get_mikrotik_log()
         assert len(logs) == 1
+
+    @pytest.mark.asyncio
+    async def test_get_interfaces_snapshot_uses_last_good_cache(self, monkeypatch):
+        import monitor.tasks as t
+
+        original_cache = dict(t._INTERFACES_CACHE)
+        try:
+            t._INTERFACES_CACHE["items"] = [{"name": "ether1", "running": True}]
+            t._INTERFACES_CACHE["ts"] = 100.0
+            monkeypatch.setattr(t.time, "time", lambda: 500.0)
+
+            async def fake_with_timeout(coro, **_kwargs):
+                await coro
+                return None
+
+            monkeypatch.setattr(t, "with_timeout", fake_with_timeout)
+            interfaces = await t._get_interfaces_snapshot(cache_ttl=1000, log_key="tasks:test:get_interfaces")
+            assert interfaces == [{"name": "ether1", "running": True}]
+        finally:
+            t._INTERFACES_CACHE.clear()
+            t._INTERFACES_CACHE.update(original_cache)
+
+    @pytest.mark.asyncio
+    async def test_get_dhcp_usage_snapshot_uses_last_good_cache(self, monkeypatch):
+        import monitor.tasks as t
+
+        original_cache = dict(t._DHCP_USAGE_CACHE)
+        try:
+            t._DHCP_USAGE_CACHE["bound"] = 42
+            t._DHCP_USAGE_CACHE["ts"] = 100.0
+            monkeypatch.setattr(t.time, "time", lambda: 150.0)
+
+            async def fake_with_timeout(coro, **_kwargs):
+                await coro
+                return None
+
+            monkeypatch.setattr(t, "with_timeout", fake_with_timeout)
+            assert await t._get_dhcp_usage_snapshot(cache_ttl=300) == 42
+        finally:
+            t._DHCP_USAGE_CACHE.clear()
+            t._DHCP_USAGE_CACHE.update(original_cache)
+
+    @pytest.mark.asyncio
+    async def test_get_router_logs_snapshot_caps_background_fetch_and_uses_cache(self, monkeypatch):
+        import monitor.tasks as t
+
+        original_cache = dict(t._ROUTER_LOG_CACHE)
+        try:
+            captured = {}
+
+            def fake_get_log(lines):
+                captured["lines"] = lines
+                return []
+
+            async def fake_with_timeout(coro, timeout=15, default=None, **kwargs):
+                await coro
+                return None
+
+            t._ROUTER_LOG_CACHE["lines"] = [{"time": "10:00:01", "topics": "system,info", "message": "cached"}]
+            t._ROUTER_LOG_CACHE["ts"] = 100.0
+            monkeypatch.setattr(t.time, "time", lambda: 120.0)
+            monkeypatch.setattr(t, "get_mikrotik_log", fake_get_log)
+            monkeypatch.setattr(t, "with_timeout", fake_with_timeout)
+
+            logs = await t._get_router_logs_snapshot(120, timeout=15, cache_ttl=300)
+            assert captured["lines"] == 60
+            assert logs == [{"time": "10:00:01", "topics": "system,info", "message": "cached"}]
+        finally:
+            t._ROUTER_LOG_CACHE.clear()
+            t._ROUTER_LOG_CACHE.update(original_cache)
         assert 'info' in logs[0]['topics']
 
     @pytest.mark.asyncio
@@ -889,6 +959,30 @@ class TestMonitorTaskLoops:
 
         with pytest.raises(asyncio.CancelledError):
             await t.task_monitor_traffic()
+
+    @pytest.mark.asyncio
+    async def test_collect_interface_traffic_uses_bounded_queries(self, monkeypatch):
+        import monitor.tasks as t
+
+        monkeypatch.setattr(t.cfg, "MIKROTIK_MAX_CONNECTIONS", 12, raising=False)
+
+        async def fake_with_timeout(coro, timeout=10, default=None, **kwargs):
+            return await coro if asyncio.iscoroutine(coro) else coro
+
+        monkeypatch.setattr(t, "with_timeout", fake_with_timeout)
+        monkeypatch.setattr(t, "get_traffic", lambda name: {"name": name, "rx_bps": 1, "tx_bps": 2})
+
+        active_ifaces = [
+            {"name": "ether1", "running": True},
+            {"name": "ether2", "running": True},
+            {"name": "ether3", "running": True},
+        ]
+
+        results = await t._collect_interface_traffic(active_ifaces, "tasks:test:get_traffic")
+
+        assert len(results) == 3
+        assert [result["name"] for result in results] == ["ether1", "ether2", "ether3"]
+        assert t._traffic_query_concurrency() == 3
 
     @pytest.mark.asyncio
     async def test_task_monitor_logs_autoblocks_bruteforce(self, monkeypatch):

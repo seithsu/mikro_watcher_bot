@@ -14,6 +14,16 @@ import core.config as cfg
 logger = logging.getLogger(__name__)
 
 
+def _allow_plain_ftp_fallback(ftps_error):
+    """Tentukan apakah fallback ke FTP plain aman dilakukan otomatis."""
+    err = str(ftps_error or "").lower()
+    if getattr(cfg, "MIKROTIK_FTP_ALLOW_INSECURE", False):
+        return True
+    # RouterOS/FTP server lawas sering menolak AUTH TLS dengan 500 AUTH not understood.
+    # Pada kasus ini, fallback ke FTP plain jauh lebih pragmatis daripada gagal total.
+    return ("auth" in err and "not understood" in err) or "500" in err
+
+
 @with_retry
 def get_status():
     """Ambil status lengkap: CPU, RAM, Uptime, Disk, Health, Routerboard.
@@ -230,6 +240,7 @@ def export_router_backup_ftp(backup_type="backup"):
         mode = None
         errors = []
 
+        ftps_error = None
         if cfg.MIKROTIK_FTP_TLS:
             try:
                 ftps = ftplib.FTP_TLS()
@@ -239,9 +250,14 @@ def export_router_backup_ftp(backup_type="backup"):
                 ftp = ftps
                 mode = "FTPS"
             except Exception as e:
+                ftps_error = e
                 errors.append(f"FTPS: {e}")
+                if _allow_plain_ftp_fallback(e):
+                    logger.info("FTPS tidak tersedia (%s), fallback otomatis ke FTP plain.", e)
+                else:
+                    logger.warning("FTPS gagal dan belum ada fallback aman: %s", e)
 
-        if ftp is None and cfg.MIKROTIK_FTP_ALLOW_INSECURE:
+        if ftp is None and _allow_plain_ftp_fallback(ftps_error):
             try:
                 plain = ftplib.FTP()
                 plain.connect(cfg.MIKROTIK_IP, int(cfg.MIKROTIK_FTP_PORT), timeout=10)
@@ -324,6 +340,4 @@ def get_system_routerboard():
         except Exception as e:
             logger.debug("Suppressed non-fatal exception: %s", e)
     return result
-
-
 

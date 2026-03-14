@@ -31,6 +31,12 @@ logger = logging.getLogger(__name__)
 _LOCAL_IP_CACHE = {"ips": set(), "ts": 0.0}
 _API_HEALTH_CACHE = {"ts": 0.0, "healthy": True, "last_error": ""}
 _API_PAUSE_LOG_TS = {}
+_INTERFACES_CACHE = {"ts": 0.0, "items": []}
+_DHCP_USAGE_CACHE = {"ts": 0.0, "bound": 0}
+_ROUTER_LOG_CACHE = {"ts": 0.0, "lines": []}
+_TRAFFIC_QUERY_MIN_CONCURRENCY = 1
+_TRAFFIC_QUERY_MAX_CONCURRENCY = 3
+_BACKGROUND_LOG_FETCH_CAP = 60
 
 
 def _get_local_ipv4_set(cache_ttl=300):
@@ -83,6 +89,82 @@ async def _get_api_health_cached(cache_ttl=5):
     return healthy, last_error
 
 
+def _clone_interfaces(items):
+    return [dict(item) for item in (items or []) if isinstance(item, dict)]
+
+
+async def _get_interfaces_snapshot(cache_ttl=180, timeout=10, log_key="tasks:get_interfaces"):
+    """Ambil daftar interface dengan cache last-good agar task periodik lebih stabil."""
+    now = time.time()
+    cached_items = _clone_interfaces(_INTERFACES_CACHE.get("items", []))
+    if cached_items and (now - float(_INTERFACES_CACHE.get("ts", 0.0))) < max(30, int(cache_ttl)):
+        return cached_items
+
+    interfaces = await with_timeout(
+        asyncio.to_thread(get_interfaces),
+        timeout=timeout,
+        log_key=log_key,
+        warn_every_sec=300,
+    )
+    if interfaces:
+        snapshot = _clone_interfaces(interfaces)
+        _INTERFACES_CACHE["items"] = snapshot
+        _INTERFACES_CACHE["ts"] = now
+        return _clone_interfaces(snapshot)
+
+    if cached_items:
+        logger.debug("[%s] memakai cache interface last-good (%s item)", log_key, len(cached_items))
+        return cached_items
+    return []
+
+
+async def _get_dhcp_usage_snapshot(cache_ttl=600):
+    """Ambil bound DHCP dengan fallback ke nilai last-good saat query timeout."""
+    bound = await with_timeout(
+        asyncio.to_thread(get_dhcp_usage_count),
+        timeout=10,
+        default=None,
+        log_key="tasks:get_dhcp_usage_count",
+        warn_every_sec=300,
+    )
+    now = time.time()
+    if bound is not None:
+        _DHCP_USAGE_CACHE["bound"] = int(bound)
+        _DHCP_USAGE_CACHE["ts"] = now
+        return int(bound)
+
+    if (now - float(_DHCP_USAGE_CACHE.get("ts", 0.0))) < max(60, int(cache_ttl)):
+        cached_bound = int(_DHCP_USAGE_CACHE.get("bound", 0) or 0)
+        logger.debug("[tasks:get_dhcp_usage_count] memakai cache last-good=%s", cached_bound)
+        return cached_bound
+    return 0
+
+
+async def _get_router_logs_snapshot(fetch_lines, timeout=15, cache_ttl=180):
+    """Ambil tail log router dengan cap background dan fallback cache last-good."""
+    requested = max(1, int(fetch_lines))
+    effective_lines = min(requested, _BACKGROUND_LOG_FETCH_CAP)
+    logs = await with_timeout(
+        asyncio.to_thread(get_mikrotik_log, effective_lines),
+        timeout=timeout,
+        default=None,
+        log_key="tasks:get_mikrotik_log",
+        warn_every_sec=300,
+    )
+    now = time.time()
+    if logs is not None:
+        normalized = list(logs)
+        _ROUTER_LOG_CACHE["lines"] = normalized
+        _ROUTER_LOG_CACHE["ts"] = now
+        return normalized
+
+    cached_logs = list(_ROUTER_LOG_CACHE.get("lines", []))
+    if cached_logs and (now - float(_ROUTER_LOG_CACHE.get("ts", 0.0))) < max(30, int(cache_ttl)):
+        logger.debug("[tasks:get_mikrotik_log] memakai cache last-good (%s line)", len(cached_logs))
+        return cached_logs[-effective_lines:]
+    return None
+
+
 async def _pause_if_api_unavailable(task_name, interval, cache_ttl=5, log_every_sec=300):
     """Pause task non-netwatch saat API unavailable agar tidak spam error."""
     healthy, last_error = await _get_api_health_cached(cache_ttl=cache_ttl)
@@ -100,6 +182,35 @@ async def _pause_if_api_unavailable(task_name, interval, cache_ttl=5, log_every_
         _API_PAUSE_LOG_TS[task_name] = now
     await asyncio.sleep(interval)
     return True
+
+
+def _traffic_query_concurrency():
+    """Batasi query monitor-traffic agar tidak memicu burst koneksi ke RouterOS."""
+    try:
+        limit = int(getattr(cfg, "MIKROTIK_MAX_CONNECTIONS", 8) or 8) // 4
+    except (TypeError, ValueError):
+        limit = 2
+    return max(_TRAFFIC_QUERY_MIN_CONCURRENCY, min(_TRAFFIC_QUERY_MAX_CONCURRENCY, limit or 2))
+
+
+async def _collect_interface_traffic(active_ifaces, log_prefix):
+    """Kumpulkan traffic interface dengan concurrency terbatas untuk menekan timeout."""
+    if not active_ifaces:
+        return []
+
+    semaphore = asyncio.Semaphore(_traffic_query_concurrency())
+
+    async def _fetch(iface):
+        async with semaphore:
+            return await with_timeout(
+                asyncio.to_thread(get_traffic, iface['name']),
+                timeout=10,
+                log_key=f"{log_prefix}:{iface['name']}",
+                warn_every_sec=300,
+            )
+
+    tasks = [_fetch(iface) for iface in active_ifaces]
+    return await asyncio.gather(*tasks, return_exceptions=True)
 
 
 def _extract_login_failure_ip(message_text):
@@ -270,12 +381,7 @@ async def task_monitor_system():
             await cek_cpu_ram(info)
             await cek_disk(info)
             # W2 FIX: Ambil interfaces sekali dan reuse untuk cek_interface + traffic check
-            _cached_interfaces = await with_timeout(
-                asyncio.to_thread(get_interfaces),
-                timeout=10,
-                log_key="tasks:get_interfaces",
-                warn_every_sec=300,
-            )
+            _cached_interfaces = await _get_interfaces_snapshot(cache_ttl=max(interval, 180))
             await cek_interface(_cached_interfaces)
             await cek_uptime_anomaly(info)
             await cek_firmware()
@@ -288,16 +394,7 @@ async def task_monitor_system():
                     iface for iface in _cached_interfaces
                     if iface['name'] not in cfg.MONITOR_IGNORE_IFACE and iface['running']
                 ]
-                traffic_tasks = [
-                    with_timeout(
-                        asyncio.to_thread(get_traffic, iface['name']),
-                        timeout=10,
-                        log_key=f"tasks:get_traffic:{iface['name']}",
-                        warn_every_sec=300,
-                    )
-                    for iface in active_ifaces
-                ]
-                traffic_results = await asyncio.gather(*traffic_tasks, return_exceptions=True)
+                traffic_results = await _collect_interface_traffic(active_ifaces, "tasks:get_traffic")
 
                 for iface, traffic in zip(active_ifaces, traffic_results):
                     if isinstance(traffic, Exception) or not traffic:
@@ -617,8 +714,8 @@ async def task_monitor_logs():
 
     # Init: baseline
     try:
-        logs = await asyncio.to_thread(get_mikrotik_log, fetch_lines)
-        for l in logs:
+        logs = await _get_router_logs_snapshot(fetch_lines, timeout=10, cache_ttl=300)
+        for l in (logs or []):
             uid = f"{l['time']}|{l['message']}"
             _add_seen(uid)
     except Exception as e:
@@ -636,12 +733,7 @@ async def task_monitor_logs():
             for u in getattr(cfg, "API_ACCOUNT_SKIP_USERS", []):
                 if str(u).strip():
                     _api_skip_users.add(str(u).strip().lower())
-            logs = await with_timeout(
-                asyncio.to_thread(get_mikrotik_log, fetch_lines),
-                timeout=15,
-                log_key="tasks:get_mikrotik_log",
-                warn_every_sec=300,
-            )
+            logs = await _get_router_logs_snapshot(fetch_lines, timeout=15)
             if logs is None:
                 await asyncio.sleep(interval)
                 continue
@@ -798,13 +890,7 @@ async def task_monitor_dhcp_arp():
                 continue
             # 1. DHCP Pool Monitor
             if cfg.DHCP_POOL_SIZE > 0:
-                bound = await with_timeout(
-                    asyncio.to_thread(get_dhcp_usage_count),
-                    timeout=10,
-                    default=0,
-                    log_key="tasks:get_dhcp_usage_count",
-                    warn_every_sec=300,
-                )
+                bound = await _get_dhcp_usage_snapshot()
                 pct = (bound / cfg.DHCP_POOL_SIZE) * 100
 
                 try:
@@ -888,11 +974,10 @@ async def task_monitor_traffic():
             cfg.reload_router_env(min_interval=10)
             if await _pause_if_api_unavailable("traffic", _TRAFFIC_INTERVAL):
                 continue
-            interfaces = await with_timeout(
-                asyncio.to_thread(get_interfaces),
+            interfaces = await _get_interfaces_snapshot(
+                cache_ttl=max(_TRAFFIC_INTERVAL * 3, 180),
                 timeout=10,
                 log_key="tasks:traffic:get_interfaces",
-                warn_every_sec=300,
             )
             if not interfaces:
                 await asyncio.sleep(_TRAFFIC_INTERVAL)
@@ -906,17 +991,7 @@ async def task_monitor_traffic():
                 await asyncio.sleep(_TRAFFIC_INTERVAL)
                 continue
 
-            # Semua get_traffic() berjalan concurrent
-            traffic_tasks = [
-                with_timeout(
-                    asyncio.to_thread(get_traffic, iface['name']),
-                    timeout=10,
-                    log_key=f"tasks:traffic:get_traffic:{iface['name']}",
-                    warn_every_sec=300,
-                )
-                for iface in active_ifaces
-            ]
-            traffic_results = await asyncio.gather(*traffic_tasks, return_exceptions=True)
+            traffic_results = await _collect_interface_traffic(active_ifaces, "tasks:traffic:get_traffic")
 
             # Kumpulkan batch dan simpan sekali ke DB
             batch = []

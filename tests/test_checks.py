@@ -255,8 +255,19 @@ class TestCekUptimeAnomaly:
     async def test_uptime_parse_error_path(self, mock_send):
         from monitor.checks import cek_uptime_anomaly
 
-        with patch("re.match", side_effect=RuntimeError("bad")):
+        with patch("re.fullmatch", side_effect=RuntimeError("bad")):
             await cek_uptime_anomaly({"uptime": "1d"})
+        mock_send.assert_not_called()
+
+    @pytest.mark.asyncio
+    @patch('monitor.checks.kirim_ke_semua_admin', new_callable=AsyncMock)
+    async def test_invalid_uptime_marker_does_not_trigger_restart(self, mock_send):
+        import monitor.checks
+        from monitor.checks import cek_uptime_anomaly
+
+        monitor.checks._last_uptime_seconds = 86400
+        await cek_uptime_anomaly({"uptime": "?"})
+        assert monitor.checks._last_uptime_seconds == 86400
         mock_send.assert_not_called()
 
 

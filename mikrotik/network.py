@@ -15,7 +15,7 @@ import core.config as cfg
 logger = logging.getLogger(__name__)
 _LOG_CACHE = []
 _LOG_CACHE_TS = 0.0
-_LOG_CACHE_TTL = 2.0
+_LOG_CACHE_TTL = 8.0
 _LOG_CACHE_DEFAULT_CAP = 300
 
 
@@ -116,6 +116,24 @@ def get_ip_addresses():
     return list(api.path('ip', 'address'))
 
 
+@cached(ttl=5, maxsize=1)
+@with_retry
+def _get_interface_counter_map():
+    """Fallback byte counter bersama agar get_traffic() tidak query interface berulang."""
+    api = pool.get_api()
+    counters = {}
+    for iface in list(api.path('interface')):
+        name = iface.get('name', '')
+        if not name:
+            continue
+        counters[name] = {
+            'rx-byte': to_int(iface.get('rx-byte', 0)),
+            'tx-byte': to_int(iface.get('tx-byte', 0)),
+        }
+    return counters
+
+
+@cached(ttl=3, maxsize=128)
 @with_retry
 def get_traffic(interface_name):
     """Ambil traffic RX/TX per interface."""
@@ -134,13 +152,10 @@ def get_traffic(interface_name):
             tx_bytes = to_int(data.get('tx-byte', 0))
 
             if rx_bytes == 0 and tx_bytes == 0:
-                # Fallback: query interface counters sekali (hanya jika perlu)
-                ifaces = list(api.path('interface'))
-                for iface in ifaces:
-                    if iface.get('name', '') == interface_name:
-                        rx_bytes = to_int(iface.get('rx-byte', 0))
-                        tx_bytes = to_int(iface.get('tx-byte', 0))
-                        break
+                counters = _get_interface_counter_map()
+                if interface_name in counters:
+                    rx_bytes = to_int(counters[interface_name].get('rx-byte', 0))
+                    tx_bytes = to_int(counters[interface_name].get('tx-byte', 0))
 
             return {
                 'name': interface_name,
@@ -163,7 +178,7 @@ def get_traffic(interface_name):
     }
 
 
-@cached(ttl=5)
+@cached(ttl=60)
 @with_retry
 def get_default_gateway():
     """
@@ -210,7 +225,7 @@ def get_dhcp_leases():
     return results
 
 
-@cached(ttl=10)
+@cached(ttl=15)
 @with_retry
 def get_dhcp_usage_count():
     """Menghitung total lease bound dengan cepat."""
@@ -287,7 +302,7 @@ def get_mikrotik_log(lines=20):
     return normalized[-req_lines:] if len(normalized) > req_lines else normalized
 
 
-@cached(ttl=60)
+@cached(ttl=300)
 @with_retry
 def _get_all_monitored_queues():
     """W3 FIX: Shared internal helper — query antrean sekali untuk AP dan Server.
@@ -318,7 +333,7 @@ def _get_all_monitored_queues():
     return aps, servers
 
 
-@cached(ttl=60)
+@cached(ttl=300)
 @with_retry
 def _get_all_queue_targets():
     """Ambil semua target IP simple queue enabled sebagai map name->ip."""
@@ -374,7 +389,7 @@ def get_monitored_servers():
         return fallback
 
 
-@cached(ttl=60)
+@cached(ttl=180)
 @with_retry
 def get_monitored_critical_devices():
     """Resolve device penting dari fallback statis + hostname DHCP.

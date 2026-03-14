@@ -144,11 +144,27 @@ class TestConfigManager:
         rate_keys = [item['key'] for item in all_configs['🛡️ Rate Limit']]
 
         assert 'NETWATCH_INTERVAL' in monitoring_keys
+        assert 'PING_COUNT' in monitoring_keys
         assert 'NETWATCH_PING_CONCURRENCY' in monitoring_keys
         assert 'API_ACCOUNT_DEDUP_WINDOW_SEC' in monitoring_keys
         assert 'CRITICAL_RECOVERY_CONFIRM_COUNT' in alert_keys
         assert 'CRITICAL_RECOVERY_MIN_UP_SECONDS' in alert_keys
         assert 'MIKROTIK_RESET_ALL_COOLDOWN_SEC' in rate_keys
+
+    def test_ping_count_can_be_set_via_config(self, tmp_path, monkeypatch):
+        from services import config_manager
+        config_file = tmp_path / 'runtime_config.json'
+        monkeypatch.setattr(config_manager, '_CONFIG_FILE', config_file)
+
+        with patch('core.database.audit_log', MagicMock()):
+            success, msg = config_manager.set_config('PING_COUNT', '6', 1, 'tester')
+
+        assert success is True
+        assert '6' in msg
+
+        with open(config_file, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        assert data['PING_COUNT'] == 6
 
     def test_top_bw_reject_warn_above_crit(self, tmp_path, monkeypatch):
         """WARN tidak boleh lebih besar dari CRIT."""

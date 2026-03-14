@@ -133,6 +133,7 @@ Set nilai angka:
 
 ```text
 /config set CPU_THRESHOLD 90
+/config set PING_COUNT 6
 /config set TOP_BW_ALERT_WARN_MBPS 50
 ```
 
@@ -149,6 +150,10 @@ Reset ke default `.env`:
 ```text
 /config reset CPU_THRESHOLD
 ```
+
+Catatan:
+- `PING_COUNT` mengatur jumlah paket untuk fitur `/ping` dan evaluasi ping bot.
+- `NETWATCH_PING_CONCURRENCY` bukan jumlah paket ping; itu hanya jumlah host yang dicek paralel oleh monitor netwatch.
 
 `pytest.ini` sudah membatasi discovery ke folder `tests/` agar artefak cache Windows tidak ikut dikoleksi.
 

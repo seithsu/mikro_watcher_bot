@@ -426,6 +426,8 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "🧹 Reset Data — Tombol di menu awal/System\n\n"
         "<b>ℹ️ Catatan</b>\n"
         "Jika alert gate aktif, notifikasi monitor baru aktif setelah /start.\n"
+        "Jumlah paket /ping diatur lewat <code>PING_COUNT</code>; "
+        "<code>NETWATCH_PING_CONCURRENCY</code> hanya mengatur banyaknya host yang dicek paralel.\n"
         "Semua menu utama menampilkan timestamp lokal bot.\n"
     )
     pesan = with_menu_timestamp(pesan)

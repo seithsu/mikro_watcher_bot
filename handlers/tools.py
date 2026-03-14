@@ -1010,6 +1010,7 @@ async def cmd_config(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "━" * 25 + "\n"
         "<i>Cara set config (angka):</i>\n"
         "<code>/config set CPU_THRESHOLD 90</code>\n"
+        "<code>/config set PING_COUNT 6</code>\n"
         "<i>Cara set config (boolean):</i>\n"
         "<code>/config set TOP_BW_ALERT_ENABLED false</code>\n"
         "<code>/config set MONITOR_VPN_ENABLED false</code>\n"
@@ -1032,4 +1033,3 @@ async def cmd_config(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception as e: logger.debug("Non-fatal UI update error: %s", e)
     else:
         await update.effective_message.reply_text(text, parse_mode='HTML', reply_markup=append_back_button(reply_markup))
-

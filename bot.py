@@ -183,6 +183,7 @@ async def callback_backup(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     data = query.data
     user = query.from_user
+    backup_success = False
 
     if await _check_access(update, user, "callback_backup"):
         return
@@ -194,68 +195,105 @@ async def callback_backup(update: Update, context: ContextTypes.DEFAULT_TYPE):
             backup_file = backup_semua()
             with open(backup_file, 'rb') as f:
                 await query.message.reply_document(
-                    document=f, filename=backup_file,
+                    document=f,
+                    filename=backup_file,
                     caption=f"✅ <b>Backup Bot Script Selesai!</b>\nFile: {backup_file}",
-                    parse_mode='HTML', reply_markup=get_back_button()
+                    parse_mode='HTML',
+                    reply_markup=get_back_button(),
                 )
             try:
                 os.remove(backup_file)
             except OSError as e:
                 logger.debug("Gagal hapus file backup bot sementara: %s", e)
-            
-        elif file_type == 'rsc' or file_type == 'ftp':
-            await query.edit_message_text("⏳ <b>Membuat backup script (.rsc) & mengunduh via FTP...</b>\n<i>Pastikan servis FTP router menyala.</i>", parse_mode='HTML')
+            backup_success = True
+
+        elif file_type in ('rsc', 'ftp'):
+            await query.edit_message_text(
+                "⏳ <b>Membuat backup script (.rsc)...</b>\n"
+                "<i>Prioritas: API export, fallback FTP/FTPS bila perlu.</i>",
+                parse_mode='HTML',
+            )
             try:
-                backup_file = await asyncio.to_thread(export_router_backup_ftp, "export")
+                backup_file = await asyncio.to_thread(export_router_backup, "export")
             except Exception as e:
-                logger.debug("Backup .rsc via FTP gagal, fallback API: %s", e)
+                logger.debug("Backup .rsc via API gagal, fallback FTP/FTPS: %s", e)
                 backup_file = None
             if not backup_file:
-                try: backup_file = await asyncio.to_thread(export_router_backup, "export")
-                except Exception as e: logger.debug("Backup .rsc via API gagal: %s", e)
+                try:
+                    backup_file = await asyncio.to_thread(export_router_backup_ftp, "export")
+                except Exception as e:
+                    logger.debug("Backup .rsc via FTP/FTPS gagal: %s", e)
+                    backup_file = None
             if backup_file and os.path.exists(backup_file):
                 with open(backup_file, 'rb') as f:
                     await query.message.reply_document(
-                        document=f, filename=backup_file,
-                        caption=f"✅ <b>Backup Selesai (.rsc)!</b>",
-                        parse_mode='HTML', reply_markup=get_back_button()
+                        document=f,
+                        filename=backup_file,
+                        caption="✅ <b>Backup Selesai (.rsc)!</b>",
+                        parse_mode='HTML',
+                        reply_markup=get_back_button(),
                     )
-                try: os.remove(backup_file)
-                except OSError as e: logger.debug("Gagal hapus file .rsc sementara: %s", e)
+                try:
+                    os.remove(backup_file)
+                except OSError as e:
+                    logger.debug("Gagal hapus file .rsc sementara: %s", e)
+                backup_success = True
             else:
-                await query.message.reply_text("❌ Gagal membuat FTP script backup (.rsc).", reply_markup=get_back_button())
-                
-        elif file_type == 'full' or file_type == 'bin':
-            await query.edit_message_text("⏳ <b>Membuat full backup (.backup) lokal...</b>\n<i>(File akan tersimpan di memory internal router, lalu di-download via API)</i>", parse_mode='HTML')
+                await query.message.reply_text(
+                    "❌ Gagal membuat backup script (.rsc).",
+                    reply_markup=get_back_button(),
+                )
+
+        elif file_type in ('full', 'bin'):
+            await query.edit_message_text(
+                "⏳ <b>Membuat full backup (.backup) lokal...</b>\n"
+                "<i>(File akan tersimpan di memory internal router, lalu di-download via API)</i>",
+                parse_mode='HTML',
+            )
             try:
                 backup_file = await asyncio.to_thread(export_router_backup_ftp, "backup")
             except Exception as e:
                 logger.debug("Backup .backup via FTP gagal, fallback API: %s", e)
                 backup_file = None
             if not backup_file:
-                try: backup_file = await asyncio.to_thread(export_router_backup, "backup")
-                except Exception as e: logger.debug("Backup .backup via API gagal: %s", e)
+                try:
+                    backup_file = await asyncio.to_thread(export_router_backup, "backup")
+                except Exception as e:
+                    logger.debug("Backup .backup via API gagal: %s", e)
+                    backup_file = None
             if backup_file and os.path.exists(backup_file):
                 with open(backup_file, 'rb') as f:
                     await query.message.reply_document(
-                        document=f, filename=backup_file,
-                        caption=f"✅ <b>Full Backup (.backup) Selesai!</b>\nCatatan: Restore file ini dari Winbox.",
-                        parse_mode='HTML', reply_markup=get_back_button()
+                        document=f,
+                        filename=backup_file,
+                        caption="✅ <b>Full Backup (.backup) Selesai!</b>\nCatatan: Restore file ini dari Winbox.",
+                        parse_mode='HTML',
+                        reply_markup=get_back_button(),
                     )
-                try: os.remove(backup_file)
-                except OSError as e: logger.debug("Gagal hapus file .backup sementara: %s", e)
+                try:
+                    os.remove(backup_file)
+                except OSError as e:
+                    logger.debug("Gagal hapus file .backup sementara: %s", e)
+                backup_success = True
             else:
-                await query.message.reply_text("❌ Gagal membuat full backup (.backup).", reply_markup=get_back_button())
-        
-        catat(user.id, user.username, f"/backup {data}", "berhasil")
-        database.audit_log(user.id, user.username, "/backup", data, "berhasil")
+                await query.message.reply_text(
+                    "❌ Gagal membuat full backup (.backup).",
+                    reply_markup=get_back_button(),
+                )
+
+        status = "berhasil" if backup_success else "gagal"
+        catat(user.id, user.username, f"/backup {data}", status)
+        database.audit_log(user.id, user.username, "/backup", data, status)
         try:
             await query.message.delete()
         except Exception as e:
             logger.debug("Gagal hapus pesan backup sebelumnya: %s", e)
     except Exception as e:
         catat(user.id, user.username, f"/backup {data}", f"error: {e}")
-        await query.message.reply_text("❌ Error saat proses backup. Cek log bot untuk detail teknis.", reply_markup=get_back_button())
+        await query.message.reply_text(
+            "❌ Error saat proses backup. Cek log bot untuk detail teknis.",
+            reply_markup=get_back_button(),
+        )
 
 
 async def callback_unban(update: Update, context: ContextTypes.DEFAULT_TYPE):

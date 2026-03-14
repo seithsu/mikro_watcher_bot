@@ -159,6 +159,7 @@ class TestAutoBackup:
             await auto_backup(context)
 
         context.bot.send_document.assert_called_once()
+        mock_ftp.assert_not_called()
         mock_remove.assert_called_once_with("backup_api.rsc")
 
     @pytest.mark.asyncio

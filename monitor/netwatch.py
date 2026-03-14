@@ -43,6 +43,13 @@ _netwatch_reconciled_hosts = set()
 _last_state_hash = None
 _api_unavailable_active = False
 _netwatch_timeout_hits = 0
+_topology_cache = {
+    "ts": 0.0,
+    "aps": {},
+    "servers": {},
+    "critical": {},
+    "gw_wan": "",
+}
 
 
 async def _host_ping(host, count=2):
@@ -117,6 +124,10 @@ def _dns_label():
     return ", ".join(domains[:3])
 
 
+def _alert_timestamp():
+    return datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+
 def _static_monitored_hosts():
     """Host minimum yang tetap bisa ditampilkan saat API RouterOS tidak tersedia."""
     hosts = [config.MIKROTIK_IP]
@@ -157,6 +168,66 @@ def _build_state_dump(
         "monitor_degraded": bool(monitor_degraded),
         "degraded_reason": str(degraded_reason or ""),
     }
+
+
+async def _load_monitored_topology(refresh_ttl=180):
+    """Load host inventory dengan cache last-good agar netwatch tidak query berat tiap tick."""
+    now_ts = datetime.datetime.now().timestamp()
+    cached_age = now_ts - float(_topology_cache.get("ts", 0.0) or 0.0)
+    if cached_age < max(15, int(refresh_ttl)):
+        return (
+            dict(_topology_cache.get("aps", {}) or {}),
+            dict(_topology_cache.get("servers", {}) or {}),
+            dict(_topology_cache.get("critical", {}) or {}),
+            str(_topology_cache.get("gw_wan", "") or ""),
+        )
+
+    current_aps = await with_timeout(
+        asyncio.to_thread(get_monitored_aps),
+        timeout=10,
+        default=None,
+        log_key="netwatch:get_monitored_aps",
+        warn_every_sec=300,
+    )
+    current_servers = await with_timeout(
+        asyncio.to_thread(get_monitored_servers),
+        timeout=10,
+        default=None,
+        log_key="netwatch:get_monitored_servers",
+        warn_every_sec=300,
+    )
+    current_critical = await with_timeout(
+        asyncio.to_thread(get_monitored_critical_devices),
+        timeout=10,
+        default=None,
+        log_key="netwatch:get_monitored_critical_devices",
+        warn_every_sec=300,
+    )
+    current_gw_wan = await with_timeout(
+        asyncio.to_thread(get_default_gateway),
+        timeout=10,
+        default=None,
+        log_key="netwatch:get_default_gateway",
+        warn_every_sec=300,
+    )
+
+    if any(value is not None for value in (current_aps, current_servers, current_critical, current_gw_wan)):
+        _topology_cache["ts"] = now_ts
+        if isinstance(current_aps, dict):
+            _topology_cache["aps"] = dict(current_aps)
+        if isinstance(current_servers, dict):
+            _topology_cache["servers"] = dict(current_servers)
+        if isinstance(current_critical, dict):
+            _topology_cache["critical"] = dict(current_critical)
+        if current_gw_wan:
+            _topology_cache["gw_wan"] = str(current_gw_wan)
+
+    return (
+        dict(_topology_cache.get("aps", {}) or {}),
+        dict(_topology_cache.get("servers", {}) or {}),
+        dict(_topology_cache.get("critical", {}) or {}),
+        str(_topology_cache.get("gw_wan", "") or ""),
+    )
 
 
 async def _persist_state_dump(state_dump):
@@ -333,37 +404,7 @@ async def task_monitor_netwatch():
                     severity=AlertSeverity.INFO,
                 )
 
-            # Refresh AP, Server, dan WAN GW dari router (sequential — hindari concurrent)
-            current_aps = await with_timeout(
-                asyncio.to_thread(get_monitored_aps),
-                timeout=10,
-                default={},
-                log_key="netwatch:get_monitored_aps",
-                warn_every_sec=300,
-            )
-            current_servers = await with_timeout(
-                asyncio.to_thread(get_monitored_servers),
-                timeout=10,
-                default={},
-                log_key="netwatch:get_monitored_servers",
-                warn_every_sec=300,
-            )
-            current_critical = await with_timeout(
-                asyncio.to_thread(get_monitored_critical_devices),
-                timeout=10,
-                default={},
-                log_key="netwatch:get_monitored_critical_devices",
-                warn_every_sec=300,
-            )
-            try:
-                current_gw_wan = await with_timeout(
-                    asyncio.to_thread(get_default_gateway),
-                    timeout=10,
-                    log_key="netwatch:get_default_gateway",
-                    warn_every_sec=300,
-                )
-            except Exception:
-                current_gw_wan = config.GW_WAN
+            current_aps, current_servers, current_critical, current_gw_wan = await _load_monitored_topology()
             if not current_gw_wan:
                 current_gw_wan = config.GW_WAN
 
@@ -588,8 +629,7 @@ async def task_monitor_netwatch():
 
                     await asyncio.to_thread(database.log_incident_down, h, host_kategori_short, snapshot)
 
-                    tz_label = datetime.datetime.now().astimezone().tzname() or "LOCAL"
-                    waktu = datetime.datetime.now().strftime(f"%Y-%m-%d %H:%M:%S {tz_label}")
+                    waktu = _alert_timestamp()
                     host_label = h
                     if h == "DNS_Resolv":
                         host_label = f"DNS Resolver ({_dns_label()})"
@@ -611,8 +651,7 @@ async def task_monitor_netwatch():
                     )
 
                 for h, dur in recoveries_to_send:
-                    tz_label = datetime.datetime.now().astimezone().tzname() or "LOCAL"
-                    waktu = datetime.datetime.now().strftime(f"%Y-%m-%d %H:%M:%S {tz_label}")
+                    waktu = _alert_timestamp()
                     host_label = h
                     if h == "DNS_Resolv":
                         host_label = f"DNS Resolver ({_dns_label()})"

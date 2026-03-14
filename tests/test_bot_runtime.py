@@ -491,9 +491,12 @@ async def test_callback_backup_rsc_success(monkeypatch, tmp_path):
     backup_file.write_text("export", encoding="utf-8")
 
     monkeypatch.setattr(bot, "_check_access", AsyncMock(return_value=False))
-    monkeypatch.setattr(bot, "export_router_backup_ftp", MagicMock(return_value=str(backup_file)))
-    monkeypatch.setattr(bot, "catat", MagicMock())
-    monkeypatch.setattr(bot.database, "audit_log", MagicMock())
+    monkeypatch.setattr(bot, "export_router_backup", MagicMock(return_value=str(backup_file)))
+    monkeypatch.setattr(bot, "export_router_backup_ftp", MagicMock(side_effect=RuntimeError("ftp should not run")))
+    catat = MagicMock()
+    audit_log = MagicMock()
+    monkeypatch.setattr(bot, "catat", catat)
+    monkeypatch.setattr(bot.database, "audit_log", audit_log)
 
     async def fake_to_thread(fn, *args, **kwargs):
         return fn(*args, **kwargs)
@@ -505,6 +508,8 @@ async def test_callback_backup_rsc_success(monkeypatch, tmp_path):
     message.reply_document.assert_called_once()
     message.delete.assert_called_once()
     assert not backup_file.exists()
+    catat.assert_any_call(user.id, user.username, "/backup backup_rsc", "berhasil")
+    audit_log.assert_any_call(user.id, user.username, "/backup", "backup_rsc", "berhasil")
 
 
 @pytest.mark.asyncio
@@ -521,10 +526,12 @@ async def test_callback_backup_rsc_fallback_failure(monkeypatch):
     update = SimpleNamespace(callback_query=query)
 
     monkeypatch.setattr(bot, "_check_access", AsyncMock(return_value=False))
-    monkeypatch.setattr(bot, "export_router_backup_ftp", MagicMock(side_effect=RuntimeError("ftp fail")))
     monkeypatch.setattr(bot, "export_router_backup", MagicMock(side_effect=RuntimeError("api fail")))
-    monkeypatch.setattr(bot, "catat", MagicMock())
-    monkeypatch.setattr(bot.database, "audit_log", MagicMock())
+    monkeypatch.setattr(bot, "export_router_backup_ftp", MagicMock(side_effect=RuntimeError("ftp fail")))
+    catat = MagicMock()
+    audit_log = MagicMock()
+    monkeypatch.setattr(bot, "catat", catat)
+    monkeypatch.setattr(bot.database, "audit_log", audit_log)
 
     async def fake_to_thread(fn, *args, **kwargs):
         return fn(*args, **kwargs)
@@ -536,6 +543,8 @@ async def test_callback_backup_rsc_fallback_failure(monkeypatch):
     query.edit_message_text.assert_called_once()
     message.reply_text.assert_called_once()
     message.delete.assert_called_once()
+    catat.assert_any_call(user.id, user.username, "/backup backup_rsc", "gagal")
+    audit_log.assert_any_call(user.id, user.username, "/backup", "backup_rsc", "gagal")
 
 
 @pytest.mark.asyncio

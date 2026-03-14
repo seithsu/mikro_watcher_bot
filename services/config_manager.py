@@ -25,6 +25,7 @@ _CONFIGURABLE = {
     'DISK_THRESHOLD': {'type': int, 'min': 10, 'max': 100, 'label': 'Disk Threshold (%)'},
     'MONITOR_INTERVAL': {'type': int, 'min': 10, 'max': 86400, 'label': 'Monitor Interval (detik)'},
     'NETWATCH_INTERVAL': {'type': int, 'min': 5, 'max': 3600, 'label': 'Netwatch Interval (detik)'},
+    'PING_COUNT': {'type': int, 'min': 1, 'max': 20, 'label': 'Ping Count'},
     'MONITOR_LOG_INTERVAL': {'type': int, 'min': 5, 'max': 3600, 'label': 'Log Monitor Interval (detik)'},
     'MONITOR_LOG_FETCH_LINES': {'type': int, 'min': 20, 'max': 1000, 'label': 'Log Fetch Lines'},
     'NETWATCH_PING_CONCURRENCY': {'type': int, 'min': 1, 'max': 32, 'label': 'Netwatch Ping Concurrency'},
@@ -61,7 +62,7 @@ _CONFIGURABLE = {
 _CATEGORIES = {
     '⚙️ Monitoring': [
         'CPU_THRESHOLD', 'RAM_THRESHOLD', 'DISK_THRESHOLD',
-        'MONITOR_INTERVAL', 'NETWATCH_INTERVAL', 'MONITOR_LOG_INTERVAL', 'MONITOR_LOG_FETCH_LINES',
+        'MONITOR_INTERVAL', 'NETWATCH_INTERVAL', 'PING_COUNT', 'MONITOR_LOG_INTERVAL', 'MONITOR_LOG_FETCH_LINES',
         'NETWATCH_PING_CONCURRENCY', 'API_ACCOUNT_DEDUP_WINDOW_SEC', 'MONITOR_VPN_ENABLED',
     ],
     '🔔 Alert': [

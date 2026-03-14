@@ -76,6 +76,51 @@ class TestDnsCheck:
         assert isinstance(result, bool)
 
 
+class TestAlertTimestamp:
+    def test_alert_timestamp_has_no_timezone_suffix(self):
+        from monitor.netwatch import _alert_timestamp
+
+        ts = _alert_timestamp()
+        assert "SE Asia Standard Time" not in ts
+        assert len(ts) == 19
+
+
+@pytest.mark.asyncio
+async def test_load_monitored_topology_reuses_last_good_cache(monkeypatch):
+    import monitor.netwatch as nw
+
+    orig_cache = dict(nw._topology_cache)
+    try:
+        nw._topology_cache.update({
+            "ts": 0.0,
+            "aps": {"AP1": "192.168.3.145"},
+            "servers": {"SIMRS": "192.168.3.10"},
+            "critical": {"IGD": "192.168.3.90"},
+            "gw_wan": "192.168.1.1",
+        })
+
+        calls = {"n": 0}
+
+        async def fake_with_timeout(_coro, timeout=10, default=None, log_key=None, **kwargs):
+            calls["n"] += 1
+            if hasattr(_coro, "close"):
+                _coro.close()
+            return None
+
+        monkeypatch.setattr(nw, "with_timeout", fake_with_timeout)
+
+        aps, servers, critical, gw = await nw._load_monitored_topology(refresh_ttl=0)
+
+        assert aps == {"AP1": "192.168.3.145"}
+        assert servers == {"SIMRS": "192.168.3.10"}
+        assert critical == {"IGD": "192.168.3.90"}
+        assert gw == "192.168.1.1"
+        assert calls["n"] == 4
+    finally:
+        nw._topology_cache.clear()
+        nw._topology_cache.update(orig_cache)
+
+
 class TestNetworkClassification:
     """Test network status classification."""
 

@@ -27,15 +27,18 @@ def with_retry(func):
     def wrapper(*args, **kwargs):
         global _last_reset_all_ts
         from .connection import pool
+        disable_global_reset = func.__name__ in {"ping_host"}
         for attempt in range(3):
             try:
                 return func(*args, **kwargs)
             except Exception as e:
                 err = str(e).lower()
-                is_conn_issue = any(k in err for k in (
+                is_session_issue = any(k in err for k in (
+                    "not logged in", "not a socket", "10038", "handshake",
+                ))
+                is_conn_issue = is_session_issue or any(k in err for k in (
                     "timeout", "timed out", "connection", "broken pipe",
-                    "refused", "network", "closed", "not logged in",
-                    "not a socket", "10038", "handshake",
+                    "refused", "network", "closed",
                 ))
                 cooldown = 120
                 retry_key = f"{func.__name__}|conn" if is_conn_issue else f"{func.__name__}|other"
@@ -48,7 +51,7 @@ def with_retry(func):
                 else:
                     logger.debug("[RETRY-suppressed] %s attempt %s/3: %s", func.__name__, attempt + 1, e)
 
-                if attempt == 0 and is_conn_issue:
+                if attempt == 0 and is_session_issue and not disable_global_reset:
                     # Saat router di-hot-swap, reset_all mempercepat recovery
                     # untuk thread lain yang mungkin memegang koneksi lama.
                     # Namun reset_all yang terlalu sering justru memicu storm.

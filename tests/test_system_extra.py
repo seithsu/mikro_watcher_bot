@@ -152,3 +152,63 @@ def test_export_router_backup_ftp_plain_fallback_success(tmp_path, monkeypatch):
     with open(out, "rb") as f:
         assert f.read() == b"binary-backup"
     file_path.remove.assert_called_once_with("*9")
+
+
+def test_export_router_backup_ftp_auto_falls_back_when_auth_tls_unsupported(tmp_path, monkeypatch):
+    from mikrotik import system as ms
+
+    monkeypatch.setattr(ms.cfg, "DATA_DIR", tmp_path, raising=False)
+    monkeypatch.setattr(ms.cfg, "MIKROTIK_IP", "192.168.3.1", raising=False)
+    monkeypatch.setattr(ms.cfg, "MIKROTIK_USER", "admin", raising=False)
+    monkeypatch.setattr(ms.cfg, "MIKROTIK_PASS", "admin", raising=False)
+    monkeypatch.setattr(ms.cfg, "MIKROTIK_FTP_PORT", 21, raising=False)
+    monkeypatch.setattr(ms.cfg, "MIKROTIK_FTP_TLS", True, raising=False)
+    monkeypatch.setattr(ms.cfg, "MIKROTIK_FTP_ALLOW_INSECURE", False, raising=False)
+    monkeypatch.setattr(ms.cfg, "reload_router_env", lambda min_interval=5: None, raising=False)
+
+    class FakeFTP:
+        def connect(self, host, port, timeout=10):
+            return None
+
+        def login(self, user, password):
+            return None
+
+        def retrbinary(self, cmd, callback):
+            callback(b"export-data")
+
+        def quit(self):
+            return None
+
+    class FakeFTPS:
+        def connect(self, host, port, timeout=10):
+            return None
+
+        def login(self, user, password):
+            raise Exception("500 'AUTH': command not understood")
+
+    with patch("mikrotik.system.time.time", return_value=2000), patch("mikrotik.system.time.sleep", return_value=None):
+        target_file = "MikroTik_Backup_2000.rsc"
+        file_path = MagicMock()
+        file_path.__iter__.return_value = iter([{"name": target_file, ".id": "*10"}])
+
+        api = MagicMock()
+        api.path.side_effect = lambda *args: (
+            file_path if args == ("file",)
+            else MagicMock()
+        )
+
+        with (
+            patch.object(ms.pool, "get_api", return_value=api),
+            patch("mikrotik.system.ftplib.FTP_TLS", return_value=FakeFTPS()),
+            patch("mikrotik.system.ftplib.FTP", return_value=FakeFTP()),
+            patch.object(ms, "_run_export_script"),
+            patch.object(ms.logger, "info") as mock_info,
+        ):
+            out = ms.export_router_backup_ftp.__wrapped__("export")
+
+    assert out.endswith(target_file)
+    assert os.path.exists(out)
+    with open(out, "rb") as f:
+        assert f.read() == b"export-data"
+    file_path.remove.assert_called_once_with("*10")
+    assert any("fallback otomatis ke FTP plain" in str(call.args[0]) for call in mock_info.call_args_list)

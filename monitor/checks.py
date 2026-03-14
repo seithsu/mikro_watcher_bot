@@ -111,7 +111,7 @@ async def cek_cpu_ram(info):
     if cpu > cfg.CPU_THRESHOLD:
         if not _last_alerts['cpu']:
             await kirim_ke_semua_admin(
-                f"⚠️ <b>[ALERT] CPU Tinggi!</b>\n\n"
+                f"[WARN] <b>CPU Tinggi!</b>\n\n"
                 f"CPU Load: <b>{cpu}%</b> (threshold: {cfg.CPU_THRESHOLD}%)\n"
                 f"Uptime: {info['uptime']}\n\n"
                 f"Cek router segera!",
@@ -122,7 +122,7 @@ async def cek_cpu_ram(info):
     else:
         if _last_alerts['cpu']:
             await kirim_ke_semua_admin(
-                f"✅ <b>[OK] CPU Kembali Normal</b>\nCPU Load: {cpu}%",
+                f"[OK] <b>CPU Kembali Normal</b>\nCPU Load: {cpu}%",
                 parse_mode='HTML'
             )
         _last_alerts['cpu'] = False
@@ -131,7 +131,7 @@ async def cek_cpu_ram(info):
     if ram_pct > cfg.RAM_THRESHOLD:
         if not _last_alerts['ram']:
             await kirim_ke_semua_admin(
-                f"⚠️ <b>[ALERT] RAM Tinggi!</b>\n\n"
+                f"[WARN] <b>RAM Tinggi!</b>\n\n"
                 f"RAM Usage: <b>{ram_pct:.1f}%</b> (threshold: {cfg.RAM_THRESHOLD}%)\n"
                 f"Uptime: {info['uptime']}\n\n"
                 f"Cek router segera!",
@@ -142,7 +142,7 @@ async def cek_cpu_ram(info):
     else:
         if _last_alerts['ram']:
             await kirim_ke_semua_admin(
-                f"✅ <b>[OK] RAM Kembali Normal</b>\nRAM Usage: {ram_pct:.1f}%",
+                f"[OK] <b>RAM Kembali Normal</b>\nRAM Usage: {ram_pct:.1f}%",
                 parse_mode='HTML'
             )
         _last_alerts['ram'] = False
@@ -169,7 +169,7 @@ async def cek_disk(info):
         if used_pct > cfg.DISK_THRESHOLD:
             if not _last_alerts.get('disk'):
                 await kirim_ke_semua_admin(
-                    f"💾 <b>[ALERT] Disk Penuh!</b>\n\n"
+                    f"[WARN] <b>Disk Penuh!</b>\n\n"
                     f"Disk Usage: <b>{used_pct:.1f}%</b> (threshold: {cfg.DISK_THRESHOLD}%)\n"
                     f"Free: {free // (1024*1024)} MB\n\n"
                     f"Segera bersihkan file backup/log di router!",
@@ -180,7 +180,7 @@ async def cek_disk(info):
         else:
             if _last_alerts.get('disk'):
                 await kirim_ke_semua_admin(
-                    f"✅ <b>[OK] Disk Kembali Normal</b>\nDisk Usage: {used_pct:.1f}%",
+                    f"[OK] <b>Disk Kembali Normal</b>\nDisk Usage: {used_pct:.1f}%",
                     parse_mode='HTML'
                 )
             _last_alerts['disk'] = False
@@ -203,11 +203,11 @@ async def cek_firmware():
         if rb and rb.get('needs_upgrade'):
             if not _last_alerts.get('firmware_checked'):
                 await kirim_ke_semua_admin(
-                    f"🔄 <b>[INFO] Firmware Update Tersedia</b>\n\n"
+                    f"[INFO] <b>Firmware Update Tersedia</b>\n\n"
                     f"Board: {rb['board']}\n"
                     f"Current: <code>{rb['current_firmware']}</code>\n"
                     f"Available: <code>{rb['upgrade_firmware']}</code>\n\n"
-                    f"Jalankan upgrade melalui Winbox → System → RouterBOARD → Upgrade",
+                    f"Jalankan upgrade melalui Winbox -> System -> RouterBOARD -> Upgrade",
                     parse_mode='HTML'
                 )
                 _last_alerts['firmware_checked'] = True
@@ -226,18 +226,24 @@ async def cek_uptime_anomaly(info):
     uptime_str = info.get('uptime', '')
     try:
         import re
+        uptime_text = str(uptime_str or '').strip()
+        if not uptime_text or uptime_text in {"?", "-", "unknown", "n/a", "N/A"}:
+            logger.debug("cek_uptime_anomaly skip invalid uptime: %r", uptime_str)
+            return
+
         pattern = r'(?:(\d+)w)?(?:(\d+)d)?(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?'
-        m = re.match(pattern, uptime_str)
-        if m:
+        m = re.fullmatch(pattern, uptime_text)
+        if m and any(part is not None for part in m.groups()):
             w, d, h, mi, s = (int(x) if x else 0 for x in m.groups())
             total_seconds = w*604800 + d*86400 + h*3600 + mi*60 + s
         else:
-            total_seconds = 0
+            logger.debug("cek_uptime_anomaly skip unparseable uptime: %r", uptime_str)
+            return
 
         if _last_uptime_seconds is not None:
             if total_seconds < _last_uptime_seconds and total_seconds < 600:
                 await kirim_ke_semua_admin(
-                    f"⚠️ <b>[ALERT] Router Restart Terdeteksi!</b>\n\n"
+                    f"[WARN] <b>Router Restart Terdeteksi!</b>\n\n"
                     f"Uptime baru: <b>{uptime_str}</b>\n\n"
                     f"Router ter-restart tanpa perintah dari bot.\n"
                     f"Kemungkinan: power cycle, crash, atau restart manual.",
@@ -287,7 +293,7 @@ async def cek_vpn_tunnels():
             for name in new_down:
                 tinfo = next((t for t in tunnels if t['name'] == name), {})
                 await kirim_ke_semua_admin(
-                    f"🔴 <b>[VPN DOWN] {name}</b>\n\n"
+                    f"[WARN] <b>[VPN DOWN] {name}</b>\n\n"
                     f"Type: {tinfo.get('type', 'unknown')}\n"
                     f"Remote: {tinfo.get('remote', '-')}\n\n"
                     f"Tunnel VPN terputus!",
@@ -297,7 +303,7 @@ async def cek_vpn_tunnels():
                 try:
                     await asyncio.to_thread(
                         database.log_incident_down, name,
-                        f"🔴 VPN DOWN (type: {tinfo.get('type','?')}, remote: {tinfo.get('remote','-')})",
+                        f"[WARN] VPN DOWN (type: {tinfo.get('type','?')}, remote: {tinfo.get('remote','-')})",
                         f"VPN tunnel {name} terputus", "vpn"
                     )
                 except Exception as dbe:
@@ -307,7 +313,7 @@ async def cek_vpn_tunnels():
             recovered = prev_down - currently_down
             for name in recovered:
                 await kirim_ke_semua_admin(
-                    f"🟢 <b>[VPN UP] {name}</b>\n\nTunnel VPN kembali terhubung.",
+                    f"[OK] <b>[VPN UP] {name}</b>\n\nTunnel VPN kembali terhubung.",
                     parse_mode='HTML'
                 )
                 # W6 FIX: Close VPN incident di database
@@ -362,7 +368,7 @@ async def cek_interface(interfaces=None):
     if newly_down:
         iface_list = ", ".join(newly_down)
         await kirim_ke_semua_admin(
-            f"⚠️ <b>[ALERT] Interface DOWN!</b>\n\n"
+            f"[WARN] <b>Interface DOWN!</b>\n\n"
             f"Interface: <b>{iface_list}</b>\n\n"
             f"Cek koneksi fisik/konfigurasi!",
             parse_mode='HTML'
@@ -373,7 +379,7 @@ async def cek_interface(interfaces=None):
     if recovered:
         iface_list = ", ".join(recovered)
         await kirim_ke_semua_admin(
-            f"✅ <b>[OK] Interface Kembali UP</b>\n\n"
+            f"[OK] <b>Interface Kembali UP</b>\n\n"
             f"Interface: <b>{iface_list}</b>",
             parse_mode='HTML'
         )
