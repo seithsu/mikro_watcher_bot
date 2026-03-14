@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 
 from services import runtime_reset
+from core.runtime_reset_signal import read_runtime_reset_signal
 
 
 def _seed_runtime_db(db_module):
@@ -51,6 +52,10 @@ def test_reset_runtime_data_clears_db_and_runtime_files(monkeypatch, tmp_path):
     assert (logs_dir / "pm2-bot.log").read_text(encoding="utf-8") == ""
     assert (logs_dir / "pm2-monitor.log").read_text(encoding="utf-8") == ""
     assert not (data_dir / "tmpabc.tmp").exists()
+    assert result["reset_signal_emitted"] is True
+    signal_payload = read_runtime_reset_signal(data_dir / "runtime_reset_signal.json")
+    assert signal_payload["reason"] == "reset_runtime_data"
+    assert signal_payload["clear_runtime_config"] is False
 
 
 def test_reset_runtime_data_can_remove_runtime_config(monkeypatch, tmp_path):
@@ -68,3 +73,5 @@ def test_reset_runtime_data_can_remove_runtime_config(monkeypatch, tmp_path):
 
     assert result["runtime_config_removed"] is True
     assert not (data_dir / "runtime_config.json").exists()
+    signal_payload = read_runtime_reset_signal(data_dir / "runtime_reset_signal.json")
+    assert signal_payload["clear_runtime_config"] is True

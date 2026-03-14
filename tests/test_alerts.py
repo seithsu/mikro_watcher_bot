@@ -135,6 +135,15 @@ class TestAlertGate:
         assert alerts.set_alert_delivery_enabled(True, actor="test", reason="unit") is True
         assert alerts.is_alert_delivery_enabled() is True
 
+    def test_gate_reads_runtime_cfg_when_module_constant_not_overridden(self, monkeypatch, tmp_path):
+        from monitor import alerts
+        monkeypatch.setattr(alerts, "_ALERT_GATE_FILE", tmp_path / "alert_gate.json", raising=False)
+        monkeypatch.setattr(
+            alerts, "ALERT_REQUIRE_START", alerts._IMPORTED_SNAPSHOT["ALERT_REQUIRE_START"], raising=False
+        )
+        monkeypatch.setattr(alerts.cfg, "ALERT_REQUIRE_START", True, raising=False)
+        assert alerts.is_alert_delivery_enabled() is False
+
     def test_set_gate_disabled_clears_pending_and_recent(self, monkeypatch, tmp_path):
         from monitor import alerts
         monkeypatch.setattr(alerts, "_ALERT_GATE_FILE", tmp_path / "alert_gate.json", raising=False)
@@ -440,6 +449,25 @@ class TestDeliveryAndDigest:
         monkeypatch.setattr(alerts.asyncio, "to_thread", fake_to_thread)
         await alerts.kirim_ke_semua_admin("warn", severity=alerts.AlertSeverity.INFO)
         assert calls == [1, 2]
+
+    @pytest.mark.asyncio
+    @patch("monitor.alerts.bot")
+    async def test_send_uses_runtime_cfg_admin_ids_when_module_constant_unchanged(self, mock_bot, monkeypatch):
+        from monitor import alerts
+        mock_bot.send_message = AsyncMock()
+        monkeypatch.setattr(
+            alerts, "ADMIN_IDS", list(alerts._IMPORTED_SNAPSHOT["ADMIN_IDS"]), raising=False
+        )
+        monkeypatch.setattr(alerts.cfg, "ADMIN_IDS", [99], raising=False)
+        monkeypatch.setattr(alerts, "is_alert_delivery_enabled", lambda: True)
+        monkeypatch.setattr(alerts, "_check_mute", lambda: False)
+
+        async def fake_to_thread(func, *a, **k):
+            return func(*a, **k)
+
+        monkeypatch.setattr(alerts.asyncio, "to_thread", fake_to_thread)
+        await alerts.kirim_ke_semua_admin("warn", severity=alerts.AlertSeverity.INFO)
+        assert mock_bot.send_message.await_args.kwargs["chat_id"] == 99
 
     @pytest.mark.asyncio
     @patch("monitor.alerts.bot")

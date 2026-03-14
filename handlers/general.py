@@ -361,7 +361,7 @@ async def callback_reset_data(update: Update, context: ContextTypes.DEFAULT_TYPE
             f"Metrics dihapus: <code>{int(db.get('metrics', 0) or 0)}</code>\n"
             f"Audit log dihapus: <code>{int(db.get('audit_log', 0) or 0)}</code>\n"
             f"Total record dihapus: <code>{int(db.get('total', 0) or 0)}</code>\n\n"
-            "Monitor akan mengisi ulang state dan metrics baru secara otomatis."
+            "Monitor akan memuat baseline baru dan membersihkan cache/state pada siklus berikutnya."
         )
         text = with_menu_timestamp(text)
         keyboard = InlineKeyboardMarkup([

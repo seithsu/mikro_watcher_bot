@@ -23,9 +23,10 @@ from .alerts import (
 from .checks import (
     cek_cpu_ram, cek_disk, cek_interface,
     cek_uptime_anomaly, cek_firmware, cek_vpn_tunnels,
-    _last_alerts
+    _last_alerts, clear_runtime_state as clear_checks_runtime_state
 )
 from core import database
+from core.runtime_reset_signal import read_runtime_reset_signal
 
 logger = logging.getLogger(__name__)
 _LOCAL_IP_CACHE = {"ips": set(), "ts": 0.0}
@@ -37,6 +38,52 @@ _ROUTER_LOG_CACHE = {"ts": 0.0, "lines": []}
 _TRAFFIC_QUERY_MIN_CONCURRENCY = 1
 _TRAFFIC_QUERY_MAX_CONCURRENCY = 3
 _BACKGROUND_LOG_FETCH_CAP = 60
+_LAST_RUNTIME_RESET_SEEN = 0.0
+
+
+def clear_runtime_state():
+    """Reset cache/state in-memory task monitor."""
+    global _LAST_RUNTIME_RESET_SEEN
+    _LOCAL_IP_CACHE["ips"] = set()
+    _LOCAL_IP_CACHE["ts"] = 0.0
+    _API_HEALTH_CACHE["ts"] = 0.0
+    _API_HEALTH_CACHE["healthy"] = True
+    _API_HEALTH_CACHE["last_error"] = ""
+    _API_PAUSE_LOG_TS.clear()
+    _INTERFACES_CACHE["ts"] = 0.0
+    _INTERFACES_CACHE["items"] = []
+    _DHCP_USAGE_CACHE["ts"] = 0.0
+    _DHCP_USAGE_CACHE["bound"] = 0
+    _ROUTER_LOG_CACHE["ts"] = 0.0
+    _ROUTER_LOG_CACHE["lines"] = []
+    _alerted_hosts_traffic.clear()
+    _top_bw_host_state.clear()
+    clear_checks_runtime_state()
+    for key in list(_last_alerts.keys()):
+        if key.startswith("traffic_"):
+            _last_alerts.pop(key, None)
+
+
+def apply_runtime_reset_if_signaled():
+    """Apply reset signal shared file sekali per proses."""
+    global _LAST_RUNTIME_RESET_SEEN
+    payload = read_runtime_reset_signal()
+    try:
+        ts = float(payload.get("ts", 0) or 0)
+    except (TypeError, ValueError):
+        ts = 0.0
+    if ts <= 0 or ts <= _LAST_RUNTIME_RESET_SEEN:
+        return False
+
+    clear_runtime_state()
+    try:
+        cfg.reload_runtime_overrides(force=True, min_interval=0)
+        cfg.reload_router_env(force=True, min_interval=0)
+    except Exception as e:
+        logger.debug("Tasks runtime reset reload gagal: %s", e)
+    _LAST_RUNTIME_RESET_SEEN = ts
+    logger.info("Monitor tasks state dibersihkan via shared reset signal.")
+    return True
 
 
 def _get_local_ipv4_set(cache_ttl=300):
@@ -328,6 +375,10 @@ async def task_monitor_system():
 
     while True:
         try:
+            if apply_runtime_reset_if_signaled():
+                _last_error_alert_time = 0
+                _last_prune_time = 0
+                _last_health_check = 0
             cfg.reload_runtime_overrides(min_interval=10)
             cfg.reload_router_env(min_interval=10)
             interval = int(cfg.MONITOR_INTERVAL)
@@ -723,6 +774,12 @@ async def task_monitor_logs():
 
     while True:
         try:
+            if apply_runtime_reset_if_signaled():
+                _seen_deque.clear()
+                _seen_set.clear()
+                _power_events_sent.clear()
+                _api_account_last_sent.clear()
+                bruteforce_tracker.clear()
             cfg.reload_runtime_overrides(min_interval=10)
             cfg.reload_router_env(min_interval=10)
             interval = int(cfg.MONITOR_LOG_INTERVAL)
@@ -884,6 +941,10 @@ async def task_monitor_dhcp_arp():
 
     while True:
         try:
+            if apply_runtime_reset_if_signaled():
+                alerted_dhcp = False
+                alerted_macs.clear()
+                open_conflict_incidents.clear()
             cfg.reload_runtime_overrides(min_interval=10)
             cfg.reload_router_env(min_interval=10)
             if await _pause_if_api_unavailable("dhcp_arp", interval):
@@ -970,6 +1031,7 @@ async def task_monitor_traffic():
 
     while True:
         try:
+            apply_runtime_reset_if_signaled()
             cfg.reload_runtime_overrides(min_interval=10)
             cfg.reload_router_env(min_interval=10)
             if await _pause_if_api_unavailable("traffic", _TRAFFIC_INTERVAL):
@@ -1019,6 +1081,7 @@ async def task_monitor_alert_maintenance():
     logger.info(f"[INIT] Alert Maintenance berjalan (Interval: {interval}s)")
     while True:
         try:
+            apply_runtime_reset_if_signaled()
             cfg.reload_runtime_overrides(min_interval=10)
             await check_escalation()
             await send_digest()

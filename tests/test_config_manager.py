@@ -3,6 +3,7 @@
 # ============================================
 
 import json
+import time
 import pytest
 from unittest.mock import patch, MagicMock
 from pathlib import Path
@@ -200,3 +201,15 @@ class TestConfigManager:
         success, msg = config_manager.set_config('MONITOR_VPN_ENABLED', 'abc')
         assert success is False
         assert 'boolean' in msg.lower()
+
+    def test_config_lock_reclaims_stale_lock(self, tmp_path, monkeypatch):
+        from services import config_manager
+
+        lock_file = tmp_path / "runtime_config.lock"
+        monkeypatch.setattr(config_manager, "_CONFIG_LOCK_FILE", lock_file, raising=False)
+        monkeypatch.setattr(config_manager, "_CONFIG_LOCK_STALE_SEC", 1, raising=False)
+
+        lock_file.write_text(json.dumps({"pid": 999, "ts": time.time() - 60}), encoding="utf-8")
+
+        with config_manager._config_lock(timeout=0.2, poll_interval=0.01):
+            assert lock_file.exists()

@@ -200,6 +200,25 @@ class TestConfigParsing:
         assert cfg.TOP_BW_ALERT_ENABLED is True
         assert cfg.ALERT_REQUIRE_START is True
 
+    def test_runtime_override_ping_count_supported(self, tmp_path, monkeypatch):
+        """PING_COUNT harus ikut mekanisme runtime override lintas-proses."""
+        import core.config as cfg
+
+        runtime_file = tmp_path / "runtime_config.json"
+        monkeypatch.setattr(cfg, "_RUNTIME_CONFIG_FILE", runtime_file, raising=False)
+        monkeypatch.setattr(cfg, "_last_runtime_reload_ts", 0.0, raising=False)
+        monkeypatch.setattr(cfg, "_last_runtime_mtime", None, raising=False)
+
+        default_ping = cfg._DEFAULT_OVERRIDABLES["PING_COUNT"]
+        runtime_file.write_text(json.dumps({"PING_COUNT": 7}), encoding="utf-8")
+
+        cfg.reload_runtime_overrides(force=True, min_interval=0)
+        assert cfg.PING_COUNT == 7
+
+        runtime_file.unlink()
+        cfg.reload_runtime_overrides(force=True, min_interval=0)
+        assert cfg.PING_COUNT == default_ping
+
     def test_reload_router_env_updates_runtime_fields(self, tmp_path, monkeypatch):
         """reload_router_env harus mengupdate field operasi penting saat .env berubah."""
         import core.config as cfg

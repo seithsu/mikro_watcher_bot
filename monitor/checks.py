@@ -90,6 +90,23 @@ _last_uptime_seconds = None
 _firmware_last_check = 0
 
 
+def clear_runtime_state():
+    """Reset state checks in-memory setelah reset runtime bersama."""
+    global _last_uptime_seconds, _firmware_last_check
+    _last_alerts.clear()
+    _last_alerts.update({
+        'cpu': False,
+        'ram': False,
+        'disk': False,
+        'firmware_checked': False,
+        'iface_down': set(),
+        'vpn_down': set(),
+        '_initialized': False,
+    })
+    _last_uptime_seconds = None
+    _firmware_last_check = 0
+
+
 async def cek_cpu_ram(info):
     """Cek CPU dan RAM, kirim alert jika melewati threshold."""
     state_before = _state_snapshot()

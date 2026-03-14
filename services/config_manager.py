@@ -17,6 +17,7 @@ logger = logging.getLogger(__name__)
 
 _CONFIG_FILE = DATA_DIR / "runtime_config.json"
 _CONFIG_LOCK_FILE = DATA_DIR / "runtime_config.lock"
+_CONFIG_LOCK_STALE_SEC = 15
 
 # Whitelist: config keys yang boleh diubah via bot, dengan validasi
 _CONFIGURABLE = {
@@ -119,12 +120,41 @@ def _config_lock(timeout=2.0, poll_interval=0.05):
     start = time.time()
     fd = None
     lock_path = str(_CONFIG_LOCK_FILE)
+
+    def _is_stale_lock(path, stale_after):
+        now = time.time()
+        try:
+            with open(path, "r", encoding="utf-8") as handle:
+                raw = handle.read().strip()
+            if raw:
+                try:
+                    meta = json.loads(raw)
+                    ts = float(meta.get("ts", 0) or 0)
+                    if ts > 0 and (now - ts) > stale_after:
+                        return True
+                except Exception:
+                    pass
+        except Exception:
+            pass
+        try:
+            return (now - os.path.getmtime(path)) > stale_after
+        except OSError:
+            return False
+
     while True:
         try:
             fd = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_RDWR)
-            os.write(fd, str(os.getpid()).encode("utf-8"))
+            payload = json.dumps({"pid": os.getpid(), "ts": time.time()})
+            os.write(fd, payload.encode("utf-8"))
             break
         except FileExistsError:
+            if _is_stale_lock(lock_path, max(3, int(_CONFIG_LOCK_STALE_SEC))):
+                try:
+                    os.unlink(lock_path)
+                    logger.warning("runtime_config.lock stale terdeteksi, lock lama direclaim.")
+                    continue
+                except OSError:
+                    pass
             if (time.time() - start) >= timeout:
                 raise TimeoutError("runtime config lock timeout")
             time.sleep(poll_interval)

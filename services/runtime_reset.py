@@ -5,6 +5,7 @@ import subprocess
 from pathlib import Path
 
 from core import database
+from core.runtime_reset_signal import emit_runtime_reset_signal
 
 
 DEFAULT_RESET_FILES = {
@@ -60,6 +61,7 @@ def reset_runtime_data(project_root: Path | None = None, clear_runtime_config: b
         "files_cleared": [],
         "glob_removed": [],
         "runtime_config_removed": False,
+        "reset_signal_emitted": False,
     }
 
     for rel_path, payload in DEFAULT_RESET_FILES.items():
@@ -89,6 +91,14 @@ def reset_runtime_data(project_root: Path | None = None, clear_runtime_config: b
     if clear_runtime_config and runtime_config_path.exists():
         runtime_config_path.unlink()
         result["runtime_config_removed"] = True
+
+    signal_payload = emit_runtime_reset_signal(
+        reason="reset_runtime_data",
+        clear_runtime_config=clear_runtime_config,
+        signal_file=root / "data/runtime_reset_signal.json",
+    )
+    if signal_payload:
+        result["reset_signal_emitted"] = True
 
     return result
 

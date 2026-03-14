@@ -26,11 +26,13 @@ from core.classification import (
 )
 from .alerts import kirim_ke_semua_admin, with_timeout, AlertSeverity, acknowledge_alert
 from core import database
+from core.runtime_reset_signal import read_runtime_reset_signal
 
 logger = logging.getLogger(__name__)
 
 _ping_semaphore = None
 _ping_semaphore_size = 0
+_last_runtime_reset_seen = 0.0
 
 # Master state arrays
 _netwatch_state = {}       # host -> True/False (UP/DOWN)
@@ -50,6 +52,51 @@ _topology_cache = {
     "critical": {},
     "gw_wan": "",
 }
+
+
+def clear_runtime_state():
+    """Reset state netwatch in-memory agar baseline benar-benar fresh."""
+    global _ping_semaphore, _ping_semaphore_size
+    global _last_state_hash, _api_unavailable_active, _netwatch_timeout_hits
+    _netwatch_state.clear()
+    _netwatch_fail.clear()
+    _netwatch_time_down.clear()
+    _netwatch_db_id.clear()
+    _netwatch_recovery.clear()
+    _netwatch_up_since.clear()
+    _netwatch_reconciled_hosts.clear()
+    _last_state_hash = None
+    _api_unavailable_active = False
+    _netwatch_timeout_hits = 0
+    _topology_cache["ts"] = 0.0
+    _topology_cache["aps"] = {}
+    _topology_cache["servers"] = {}
+    _topology_cache["critical"] = {}
+    _topology_cache["gw_wan"] = ""
+    _ping_semaphore = None
+    _ping_semaphore_size = 0
+
+
+def apply_runtime_reset_if_signaled():
+    """Apply shared runtime-reset signal sekali per proses."""
+    global _last_runtime_reset_seen
+    payload = read_runtime_reset_signal()
+    try:
+        ts = float(payload.get("ts", 0) or 0)
+    except (TypeError, ValueError):
+        ts = 0.0
+    if ts <= 0 or ts <= _last_runtime_reset_seen:
+        return False
+
+    clear_runtime_state()
+    try:
+        config.reload_runtime_overrides(force=True, min_interval=0)
+        config.reload_router_env(force=True, min_interval=0)
+    except Exception as e:
+        logger.debug("Netwatch runtime reset reload gagal: %s", e)
+    _last_runtime_reset_seen = ts
+    logger.info("Netwatch state dibersihkan via shared reset signal.")
+    return True
 
 
 async def _host_ping(host, count=2):
@@ -383,6 +430,8 @@ async def task_monitor_netwatch():
 
     while True:
         try:
+            if apply_runtime_reset_if_signaled():
+                _last_full_timeout_alert = 0.0
             config.reload_runtime_overrides(min_interval=10)
             config.reload_router_env(min_interval=10)
             interval = int(getattr(config, "NETWATCH_INTERVAL", interval))

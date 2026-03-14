@@ -16,26 +16,37 @@ from enum import Enum
 
 from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup
 
-from core.config import (
-    ADMIN_IDS,
-    ALERT_REQUIRE_START,
-    ALERT_DIGEST_THRESHOLD,
-    ALERT_DIGEST_WINDOW,
-    ALERT_ESCALATION_MINUTES,
-    ALERT_IPC_LOCK_STALE_SEC,
-    DATA_DIR,
-    TOKEN,
-)
+import core.config as cfg
+from core.runtime_reset_signal import read_runtime_reset_signal
 
 logger = logging.getLogger(__name__)
 _TIMEOUT_LOG_STATE = {}
 
+_IMPORTED_SNAPSHOT = {
+    "ADMIN_IDS": list(getattr(cfg, "ADMIN_IDS", []) or []),
+    "ALERT_REQUIRE_START": bool(getattr(cfg, "ALERT_REQUIRE_START", False)),
+    "ALERT_DIGEST_THRESHOLD": int(getattr(cfg, "ALERT_DIGEST_THRESHOLD", 5) or 5),
+    "ALERT_DIGEST_WINDOW": int(getattr(cfg, "ALERT_DIGEST_WINDOW", 300) or 300),
+    "ALERT_ESCALATION_MINUTES": int(getattr(cfg, "ALERT_ESCALATION_MINUTES", 15) or 15),
+    "ALERT_IPC_LOCK_STALE_SEC": int(getattr(cfg, "ALERT_IPC_LOCK_STALE_SEC", 15) or 15),
+    "TOKEN": str(getattr(cfg, "TOKEN", "") or ""),
+}
+
+# Backward-compat untuk monkeypatch test lama.
+ADMIN_IDS = list(_IMPORTED_SNAPSHOT["ADMIN_IDS"])
+ALERT_REQUIRE_START = _IMPORTED_SNAPSHOT["ALERT_REQUIRE_START"]
+ALERT_DIGEST_THRESHOLD = _IMPORTED_SNAPSHOT["ALERT_DIGEST_THRESHOLD"]
+ALERT_DIGEST_WINDOW = _IMPORTED_SNAPSHOT["ALERT_DIGEST_WINDOW"]
+ALERT_ESCALATION_MINUTES = _IMPORTED_SNAPSHOT["ALERT_ESCALATION_MINUTES"]
+ALERT_IPC_LOCK_STALE_SEC = _IMPORTED_SNAPSHOT["ALERT_IPC_LOCK_STALE_SEC"]
+TOKEN = _IMPORTED_SNAPSHOT["TOKEN"]
+
 # Cross-process IPC files
-_ACK_FILE = DATA_DIR / "pending_acks.json"
-_ACK_EVENTS_FILE = DATA_DIR / "ack_events.json"
-_IPC_LOCK_FILE = DATA_DIR / "pending_acks.lock"
-_MUTE_FILE = DATA_DIR / "mute.lock"
-_ALERT_GATE_FILE = DATA_DIR / "alert_gate.json"
+_ACK_FILE = cfg.DATA_DIR / "pending_acks.json"
+_ACK_EVENTS_FILE = cfg.DATA_DIR / "ack_events.json"
+_IPC_LOCK_FILE = cfg.DATA_DIR / "pending_acks.lock"
+_MUTE_FILE = cfg.DATA_DIR / "mute.lock"
+_ALERT_GATE_FILE = cfg.DATA_DIR / "alert_gate.json"
 
 
 # ============ BOT LAZY INIT ============
@@ -47,9 +58,10 @@ def _get_bot() -> Bot:
     """Lazy initialize bot instance."""
     global _bot_instance
     if _bot_instance is None:
-        if not TOKEN:
+        token = str(_runtime_value("TOKEN", "") or "")
+        if not token:
             raise RuntimeError("TOKEN belum dikonfigurasi! Cek file .env")
-        _bot_instance = Bot(token=TOKEN)
+        _bot_instance = Bot(token=token)
     return _bot_instance
 
 
@@ -85,6 +97,16 @@ _SEVERITY_PREFIX = {
 _pending_acks = {}
 _recent_alerts = deque(maxlen=100)
 _acknowledged = set()
+_last_runtime_reset_seen = 0.0
+
+
+def _runtime_value(name, default=None):
+    """Ambil config runtime; fallback ke monkeypatch module-level bila diubah oleh test."""
+    module_value = globals().get(name)
+    snapshot = _IMPORTED_SNAPSHOT.get(name, default)
+    if module_value != snapshot:
+        return module_value
+    return getattr(cfg, name, default)
 
 
 # ============ IPC HELPERS ============
@@ -128,7 +150,7 @@ def _ipc_lock(timeout=2.0, poll_interval=0.05):
                 logger.debug("Suppressed non-fatal exception: %s", e)
             break
         except FileExistsError:
-            if _is_stale_lock(lock_path, max(3, int(ALERT_IPC_LOCK_STALE_SEC))):
+            if _is_stale_lock(lock_path, max(3, int(_runtime_value("ALERT_IPC_LOCK_STALE_SEC", 15)))):
                 try:
                     os.unlink(lock_path)
                     logger.warning("IPC lock stale terdeteksi, lock lama direclaim.")
@@ -264,6 +286,7 @@ def _save_pending_acks():
 
 def get_pending_alerts():
     """Return pending alerts gabungan snapshot file + memory."""
+    apply_runtime_reset_if_signaled()
     file_data = _load_pending_acks_from_file() or {}
 
     combined = dict(file_data)
@@ -303,6 +326,7 @@ def acknowledge_alert(alert_key=None):
 
     Returns: jumlah alert yang di-acknowledge.
     """
+    apply_runtime_reset_if_signaled()
     file_data = _load_pending_acks_from_file()
     if file_data is None:
         file_data = {}
@@ -354,9 +378,39 @@ def _check_mute():
     return False
 
 
+def clear_runtime_state():
+    """Clear state alert in-memory agar baseline reset benar-benar fresh."""
+    _pending_acks.clear()
+    _recent_alerts.clear()
+    _acknowledged.clear()
+    _TIMEOUT_LOG_STATE.clear()
+
+
+def apply_runtime_reset_if_signaled():
+    """Apply shared runtime-reset signal sekali per proses."""
+    global _last_runtime_reset_seen
+    payload = read_runtime_reset_signal()
+    try:
+        ts = float(payload.get("ts", 0) or 0)
+    except (TypeError, ValueError):
+        ts = 0.0
+    if ts <= 0 or ts <= _last_runtime_reset_seen:
+        return False
+
+    clear_runtime_state()
+    try:
+        cfg.reload_runtime_overrides(force=True, min_interval=0)
+        cfg.reload_router_env(force=True, min_interval=0)
+    except Exception as e:
+        logger.debug("Alert runtime reset reload gagal: %s", e)
+    _last_runtime_reset_seen = ts
+    logger.info("Alert runtime state dibersihkan via shared reset signal.")
+    return True
+
+
 def is_alert_delivery_enabled():
     """Gate global untuk pengiriman alert monitor."""
-    if not ALERT_REQUIRE_START:
+    if not bool(_runtime_value("ALERT_REQUIRE_START", False)):
         return True
     try:
         with _ipc_lock():
@@ -393,6 +447,7 @@ def set_alert_delivery_enabled(enabled, actor="system", reason=""):
 
 async def kirim_ke_semua_admin(pesan, parse_mode=None, severity=AlertSeverity.WARNING, alert_key=None):
     """Kirim pesan alert ke semua admin."""
+    apply_runtime_reset_if_signaled()
     delivery_enabled = await asyncio.to_thread(is_alert_delivery_enabled)
     if not delivery_enabled:
         return
@@ -406,12 +461,14 @@ async def kirim_ke_semua_admin(pesan, parse_mode=None, severity=AlertSeverity.WA
     # Digest batching hanya untuk WARNING
     if severity == AlertSeverity.WARNING:
         _recent_alerts.append((now, pesan, severity))
+        digest_window = int(_runtime_value("ALERT_DIGEST_WINDOW", 300) or 300)
+        digest_threshold = int(_runtime_value("ALERT_DIGEST_THRESHOLD", 5) or 5)
         recent_count = sum(
             1
             for ts, _, sev in _recent_alerts
-            if now - ts < ALERT_DIGEST_WINDOW and sev == AlertSeverity.WARNING
+            if now - ts < digest_window and sev == AlertSeverity.WARNING
         )
-        if recent_count > ALERT_DIGEST_THRESHOLD:
+        if recent_count > digest_threshold:
             logger.info(f"Alert suppressed (digest mode): {pesan[:50]}...")
             return
 
@@ -440,7 +497,7 @@ async def kirim_ke_semua_admin(pesan, parse_mode=None, severity=AlertSeverity.WA
             ]
         )
 
-    for admin_id in ADMIN_IDS:
+    for admin_id in list(_runtime_value("ADMIN_IDS", []) or []):
         try:
             await bot.send_message(
                 chat_id=admin_id,
@@ -454,12 +511,14 @@ async def kirim_ke_semua_admin(pesan, parse_mode=None, severity=AlertSeverity.WA
 
 async def check_escalation():
     """Check dan kirim escalation untuk CRITICAL alerts yang belum di-ack."""
+    apply_runtime_reset_if_signaled()
     delivery_enabled = await asyncio.to_thread(is_alert_delivery_enabled)
     if not delivery_enabled:
         return
 
     now = time.time()
-    escalation_timeout = ALERT_ESCALATION_MINUTES * 60
+    escalation_timeout = int(_runtime_value("ALERT_ESCALATION_MINUTES", 15) or 15) * 60
+    admin_ids = list(_runtime_value("ADMIN_IDS", []) or [])
 
     # Hydrate snapshot file
     file_data = _load_pending_acks_from_file()
@@ -504,11 +563,11 @@ async def check_escalation():
                 ]
             )
 
-            if info["escalated"] >= 3 or len(ADMIN_IDS) == 1:
-                target_admins = ADMIN_IDS
+            if info["escalated"] >= 3 or len(admin_ids) == 1:
+                target_admins = admin_ids
             else:
-                idx = (info["escalated"] - 1) % len(ADMIN_IDS)
-                target_admins = [ADMIN_IDS[idx]]
+                idx = (info["escalated"] - 1) % len(admin_ids)
+                target_admins = [admin_ids[idx]]
 
             for admin_id in target_admins:
                 try:
@@ -527,18 +586,21 @@ async def check_escalation():
 
 async def send_digest():
     """Kirim digest summary jika alert warning menumpuk."""
+    apply_runtime_reset_if_signaled()
     delivery_enabled = await asyncio.to_thread(is_alert_delivery_enabled)
     if not delivery_enabled:
         return
 
     now = time.time()
+    digest_window = int(_runtime_value("ALERT_DIGEST_WINDOW", 300) or 300)
+    digest_threshold = int(_runtime_value("ALERT_DIGEST_THRESHOLD", 5) or 5)
     batched = [
         (ts, msg, sev)
         for ts, msg, sev in _recent_alerts
-        if now - ts < ALERT_DIGEST_WINDOW and sev != AlertSeverity.CRITICAL
+        if now - ts < digest_window and sev != AlertSeverity.CRITICAL
     ]
 
-    if len(batched) <= ALERT_DIGEST_THRESHOLD:
+    if len(batched) <= digest_threshold:
         return
 
     batched_timestamps = {ts for ts, _, _ in batched}
@@ -553,11 +615,11 @@ async def send_digest():
 
     digest_msg = (
         f"🔔 <b>ALERT DIGEST</b>\n\n"
-        f"<b>{len(batched)}</b> alert dalam {ALERT_DIGEST_WINDOW // 60} menit terakhir:\n\n"
+        f"<b>{len(batched)}</b> alert dalam {digest_window // 60} menit terakhir:\n\n"
         + "\n".join(summary_lines)
     )
 
-    for admin_id in ADMIN_IDS:
+    for admin_id in list(_runtime_value("ADMIN_IDS", []) or []):
         try:
             await bot.send_message(chat_id=admin_id, text=digest_msg, parse_mode="HTML")
         except Exception as e:
