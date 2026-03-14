@@ -20,12 +20,86 @@ logger = logging.getLogger(__name__)
 
 # C2 FIX: reboot cooldown state di modul sendiri — tidak lagi import dari bot.py
 _last_reboot_time = 0
+_MTLOG_FILTER_KEYWORDS = {
+    'error': ['error', 'critical'],
+    'warning': ['warning'],
+    'account': ['account'],
+    'all': None,
+}
 
 
 def set_last_reboot_time(ts):
     """Setter untuk reboot timestamp (dipakai callback_reboot di bot.py)."""
     global _last_reboot_time
     _last_reboot_time = ts
+
+
+async def _edit_or_reply_text(
+    update: Update,
+    text,
+    *,
+    parse_mode=None,
+    reply_markup=None,
+    target_message=None,
+    target_editor=None,
+    allow_fallback_reply=True,
+    log_template="Suppressed non-fatal exception: %s",
+):
+    """Coba edit pesan callback; fallback ke reply biasa jika gagal/tidak ada callback."""
+    if update.callback_query:
+        try:
+            if target_editor is not None:
+                await target_editor(text, parse_mode=parse_mode, reply_markup=reply_markup)
+            else:
+                message = target_message or update.callback_query.message
+                await message.edit_text(text, parse_mode=parse_mode, reply_markup=reply_markup)
+            return True
+        except Exception as e:
+            logger.debug(log_template, e)
+
+    if not allow_fallback_reply:
+        return False
+
+    await update.effective_message.reply_text(text, parse_mode=parse_mode, reply_markup=reply_markup)
+    return False
+
+
+def _build_mtlog_filter_markup(nav_buttons=None):
+    """Keyboard filter log MikroTik yang dipakai ulang di seluruh alur mtlog."""
+    keyboard = []
+    if nav_buttons:
+        keyboard.append(list(nav_buttons))
+    keyboard.append([
+        InlineKeyboardButton("Semua", callback_data='logfilter_all'),
+        InlineKeyboardButton("🔴 Error/Crit", callback_data='logfilter_error')
+    ])
+    keyboard.append([
+        InlineKeyboardButton("⚠️ Warning", callback_data='logfilter_warning'),
+        InlineKeyboardButton("🛡️ Auth", callback_data='logfilter_account')
+    ])
+    return InlineKeyboardMarkup(keyboard)
+
+
+def _filter_mtlog_entries(logs, topic_filter):
+    """Filter log berdasarkan kelompok topic yang didukung UI."""
+    if topic_filter == "all":
+        return list(logs)
+
+    keywords = _MTLOG_FILTER_KEYWORDS.get(topic_filter, [topic_filter])
+    filtered_logs = []
+    for log in logs:
+        topics_str = str(log.get('topics', '')).lower()
+        if any(kw in topics_str for kw in keywords):
+            filtered_logs.append(log)
+    return filtered_logs
+
+
+def _get_first_context_arg(context):
+    """Ambil argumen command pertama jika context.args memang list/tuple non-kosong."""
+    args = getattr(context, "args", None)
+    if isinstance(args, (list, tuple)) and args:
+        return str(args[0])
+    return None
 
 
 async def _get_device_header():
@@ -196,7 +270,12 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.callback_query:
         try:
             await update.callback_query.answer()
-            await update.callback_query.message.edit_text(pesan, parse_mode='HTML', reply_markup=reply_markup)
+            await _edit_or_reply_text(
+                update,
+                pesan,
+                parse_mode='HTML',
+                reply_markup=reply_markup,
+            )
             return
         except Exception as e:
             logger.debug("Suppressed non-fatal exception: %s", e)
@@ -299,10 +378,14 @@ async def callback_menu_cat(update: Update, context: ContextTypes.DEFAULT_TYPE):
         InlineKeyboardButton("🏠 Home", callback_data='cmd_start'),
     ])
 
-    try:
-        await query.edit_message_text(text, parse_mode='HTML', reply_markup=InlineKeyboardMarkup(keyboard))
-    except Exception as e:
-        logger.debug("Suppressed non-fatal exception: %s", e)
+    await _edit_or_reply_text(
+        update,
+        text,
+        parse_mode='HTML',
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        target_editor=query.edit_message_text,
+        allow_fallback_reply=False,
+    )
 
 
 async def callback_reset_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -435,7 +518,12 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.callback_query:
         try:
             await update.callback_query.answer()
-            await update.callback_query.message.edit_text(pesan, parse_mode='HTML', reply_markup=get_back_button())
+            await _edit_or_reply_text(
+                update,
+                pesan,
+                parse_mode='HTML',
+                reply_markup=get_back_button(),
+            )
             return
         except Exception as e:
             logger.debug("Suppressed non-fatal exception: %s", e)
@@ -766,7 +854,12 @@ async def cmd_history(update: Update, context: ContextTypes.DEFAULT_TYPE):
     catat(user.id, user.username, "/history", "berhasil")
     if update.callback_query:
         try:
-            await update.callback_query.message.edit_text(pesan, parse_mode='HTML', reply_markup=reply_markup)
+            await _edit_or_reply_text(
+                update,
+                pesan,
+                parse_mode='HTML',
+                reply_markup=reply_markup,
+            )
             return
         except Exception as e:
             logger.debug("Suppressed non-fatal exception: %s", e)
@@ -913,7 +1006,12 @@ async def cmd_reboot(update: Update, context: ContextTypes.DEFAULT_TYPE):
     pesan_reboot = with_menu_timestamp(pesan_reboot)
     if update.callback_query:
         try:
-            await update.callback_query.message.edit_text(pesan_reboot, parse_mode='HTML', reply_markup=reply_markup)
+            await _edit_or_reply_text(
+                update,
+                pesan_reboot,
+                parse_mode='HTML',
+                reply_markup=reply_markup,
+            )
             return
         except Exception as e:
             logger.debug("Suppressed non-fatal exception: %s", e)
@@ -946,7 +1044,11 @@ async def cmd_backup(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     if update.callback_query:
         try:
-            await update.callback_query.message.edit_text(pesan_backup, reply_markup=reply_markup)
+            await _edit_or_reply_text(
+                update,
+                pesan_backup,
+                reply_markup=reply_markup,
+            )
             return
         except Exception as e:
             logger.debug("Suppressed non-fatal exception: %s", e)
@@ -968,7 +1070,12 @@ async def cmd_log(update: Update, context: ContextTypes.DEFAULT_TYPE):
     catat(user.id, user.username, "/log", "berhasil")
     if update.callback_query:
         try:
-            await update.callback_query.message.edit_text(text, parse_mode='HTML', reply_markup=get_back_button())
+            await _edit_or_reply_text(
+                update,
+                text,
+                parse_mode='HTML',
+                reply_markup=get_back_button(),
+            )
             return
         except Exception as e:
             logger.debug("Suppressed non-fatal exception: %s", e)
@@ -1009,20 +1116,7 @@ def _format_mtlog_page(filtered_logs, topic_filter, page=0, per_page=10):
     if page < total_pages - 1:
         nav_buttons.append(InlineKeyboardButton("Next ▶️", callback_data=f"mtlogpage_{topic_filter}_{page + 1}"))
 
-    # Filter buttons
-    keyboard = []
-    if nav_buttons:
-        keyboard.append(nav_buttons)
-    keyboard.append([
-        InlineKeyboardButton("Semua", callback_data='logfilter_all'),
-        InlineKeyboardButton("🔴 Error/Crit", callback_data='logfilter_error')
-    ])
-    keyboard.append([
-        InlineKeyboardButton("⚠️ Warning", callback_data='logfilter_warning'),
-        InlineKeyboardButton("🛡️ Auth", callback_data='logfilter_account')
-    ])
-
-    reply_markup = InlineKeyboardMarkup(keyboard)
+    reply_markup = _build_mtlog_filter_markup(nav_buttons=nav_buttons)
     return with_menu_timestamp(text), reply_markup
 
 
@@ -1033,8 +1127,9 @@ async def cmd_mtlog(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if await _check_access(update, user, "/mtlog"): return
 
     topic_filter = "all"
-    if context.args:
-        topic_filter = context.args[0]
+    first_arg = _get_first_context_arg(context)
+    if first_arg:
+        topic_filter = first_arg
     elif update.callback_query and update.callback_query.data.startswith('logfilter_'):
         topic_filter = update.callback_query.data.replace('logfilter_', '')
 
@@ -1051,40 +1146,19 @@ async def cmd_mtlog(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if not logs:
             text = with_menu_timestamp("ℹ️ Log MikroTik kosong.")
-            keyboard = [
-                [
-                    InlineKeyboardButton("Semua", callback_data='logfilter_all'),
-                    InlineKeyboardButton("🔴 Error/Crit", callback_data='logfilter_error')
-                ],
-                [
-                    InlineKeyboardButton("⚠️ Warning", callback_data='logfilter_warning'),
-                    InlineKeyboardButton("🛡️ Auth", callback_data='logfilter_account')
-                ]
-            ]
-            reply_markup = InlineKeyboardMarkup(keyboard)
-            if update.callback_query:
-                try: await msg.edit_text(text, parse_mode='HTML', reply_markup=append_back_button(reply_markup))
-                except Exception as e: logger.debug("Non-fatal UI update error: %s", e)
-            else:
-                await update.effective_message.reply_text(text, parse_mode='HTML', reply_markup=append_back_button(reply_markup))
+            reply_markup = append_back_button(_build_mtlog_filter_markup())
+            await _edit_or_reply_text(
+                update,
+                text,
+                parse_mode='HTML',
+                reply_markup=reply_markup,
+                target_message=msg,
+                allow_fallback_reply=not bool(update.callback_query),
+                log_template="Non-fatal UI update error: %s",
+            )
             return
 
-        # Filter logs — multi-keyword matching (A8 fix)
-        _FILTER_KEYWORDS = {
-            'error': ['error', 'critical'],  # Gabung error+critical
-            'warning': ['warning'],
-            'account': ['account'],
-            'all': None,
-        }
-        filtered_logs = []
-        for log in logs:
-            if topic_filter == "all":
-                filtered_logs.append(log)
-            else:
-                keywords = _FILTER_KEYWORDS.get(topic_filter, [topic_filter])
-                topics_str = log.get('topics', '').lower()
-                if any(kw in topics_str for kw in keywords):
-                    filtered_logs.append(log)
+        filtered_logs = _filter_mtlog_entries(logs, topic_filter)
 
         # Simpan ke bot_data untuk pagination
         cache_key = f"mtlog_{topic_filter}"
@@ -1092,49 +1166,42 @@ async def cmd_mtlog(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if not filtered_logs:
             text = f"ℹ️ Tidak ada log untuk filter '<b>{topic_filter}</b>' dalam 200 baris terakhir."
-            keyboard = [
-                [
-                    InlineKeyboardButton("Semua", callback_data='logfilter_all'),
-                    InlineKeyboardButton("🔴 Error/Crit", callback_data='logfilter_error')
-                ],
-                [
-                    InlineKeyboardButton("⚠️ Warning", callback_data='logfilter_warning'),
-                    InlineKeyboardButton("🛡️ Auth", callback_data='logfilter_account')
-                ]
-            ]
-            reply_markup = InlineKeyboardMarkup(keyboard)
-            if update.callback_query:
-                try: await msg.edit_text(text, parse_mode='HTML', reply_markup=append_back_button(reply_markup))
-                except Exception as e: logger.debug("Non-fatal UI update error: %s", e)
-            else:
-                await update.effective_message.reply_text(text, parse_mode='HTML', reply_markup=append_back_button(reply_markup))
+            reply_markup = append_back_button(_build_mtlog_filter_markup())
+            await _edit_or_reply_text(
+                update,
+                text,
+                parse_mode='HTML',
+                reply_markup=reply_markup,
+                target_message=msg,
+                allow_fallback_reply=not bool(update.callback_query),
+                log_template="Non-fatal UI update error: %s",
+            )
             return
 
         text, reply_markup = _format_mtlog_page(filtered_logs, topic_filter, page=0)
 
         catat(user.id, user.username, f"/mtlog {topic_filter}", "berhasil")
-        if update.callback_query:
-            try: await msg.edit_text(text, parse_mode='HTML', reply_markup=append_back_button(reply_markup))
-            except Exception as e: logger.debug("Non-fatal UI update error: %s", e)
-        else:
-            await update.effective_message.reply_text(text, parse_mode='HTML', reply_markup=append_back_button(reply_markup))
+        await _edit_or_reply_text(
+            update,
+            text,
+            parse_mode='HTML',
+            reply_markup=append_back_button(reply_markup),
+            target_message=msg,
+            allow_fallback_reply=not bool(update.callback_query),
+            log_template="Non-fatal UI update error: %s",
+        )
 
     except Exception as e:
         catat(user.id, user.username, "/mtlog", f"gagal: {e}")
-        if update.callback_query:
-            try:
-                await msg.edit_text(
-                    generic_error_html("Gagal memuat log MikroTik"),
-                    parse_mode='HTML',
-                    reply_markup=get_back_button()
-                )
-            except Exception as e: logger.debug("Non-fatal UI update error: %s", e)
-        else:
-            await update.effective_message.reply_text(
-                generic_error_html("Gagal memuat log MikroTik"),
-                parse_mode='HTML',
-                reply_markup=get_back_button()
-            )
+        await _edit_or_reply_text(
+            update,
+            generic_error_html("Gagal memuat log MikroTik"),
+            parse_mode='HTML',
+            reply_markup=get_back_button(),
+            target_message=msg,
+            allow_fallback_reply=not bool(update.callback_query),
+            log_template="Non-fatal UI update error: %s",
+        )
 
 
 async def callback_mtlog(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1166,7 +1233,11 @@ async def callback_mtlog(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     text, reply_markup = _format_mtlog_page(filtered_logs, topic_filter, page)
     await query.answer()
-    try:
-        await query.edit_message_text(text, parse_mode='HTML', reply_markup=append_back_button(reply_markup))
-    except Exception as e:
-        logger.debug("Suppressed non-fatal exception: %s", e)
+    await _edit_or_reply_text(
+        update,
+        text,
+        parse_mode='HTML',
+        reply_markup=append_back_button(reply_markup),
+        target_editor=query.edit_message_text,
+        allow_fallback_reply=False,
+    )
