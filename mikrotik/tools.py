@@ -11,6 +11,28 @@ from .decorators import with_retry, to_int
 logger = logging.getLogger(__name__)
 
 
+def _truthy(value):
+    return str(value).strip().lower() in {"true", "yes", "on", "1"}
+
+
+def _is_active_arp_entry(arp):
+    mac = str(arp.get('mac-address', '') or '').strip()
+    if not mac or mac in {"00:00:00:00:00:00", "00-00-00-00-00-00"}:
+        return False
+
+    status = str(arp.get('status', '') or '').strip().lower()
+    if status in {"incomplete", "failed", "stale", "delay", "probe"}:
+        return False
+
+    if 'complete' in arp and not _truthy(arp.get('complete')):
+        return False
+
+    if _truthy(arp.get('invalid')) or _truthy(arp.get('disabled')):
+        return False
+
+    return True
+
+
 @with_retry
 def ping_host(address, count=4):
     """Ping ke host dari router via RouterOS API.
@@ -124,6 +146,8 @@ def find_free_ips(network_with_cidr):
     try:
         arp_list = list(api.path('ip', 'arp'))
         for arp in arp_list:
+            if not _is_active_arp_entry(arp):
+                continue
             ip_str = arp.get('address', '')
             if ip_str:
                 try:
@@ -139,6 +163,12 @@ def find_free_ips(network_with_cidr):
     try:
         dhcp_list = list(api.path('ip', 'dhcp-server', 'lease'))
         for d in dhcp_list:
+            status = str(d.get('status', '') or '').strip().lower()
+            is_static = not _truthy(d.get('dynamic', True))
+            if status != 'bound' and not is_static:
+                continue
+            if _truthy(d.get('disabled')):
+                continue
             ip_str = d.get('address', '')
             if ip_str:
                 try:
@@ -197,6 +227,5 @@ def find_free_ips(network_with_cidr):
         'free_count': len(free_ips),
         'free_ips': free_ips
     }
-
 
 

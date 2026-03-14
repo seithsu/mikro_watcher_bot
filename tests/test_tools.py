@@ -3,6 +3,23 @@ from unittest.mock import patch, MagicMock
 
 @patch('mikrotik.tools.pool.get_api')
 class TestTools:
+    def test_active_arp_filter_rejects_stale_entries(self, mock_get_api):
+        from mikrotik.tools import _is_active_arp_entry
+
+        assert _is_active_arp_entry({
+            'mac-address': 'AA:BB:CC:DD:EE:01',
+            'complete': 'true',
+            'status': 'reachable',
+        }) is True
+        assert _is_active_arp_entry({
+            'mac-address': 'AA:BB:CC:DD:EE:01',
+            'complete': 'false',
+        }) is False
+        assert _is_active_arp_entry({
+            'mac-address': 'AA:BB:CC:DD:EE:01',
+            'status': 'stale',
+        }) is False
+
     def test_ping_host_empty_results(self, mock_get_api):
         from mikrotik.tools import ping_host
 
@@ -109,9 +126,9 @@ class TestTools:
         def mock_path(*args):
             p = MagicMock()
             if args == ('ip', 'dhcp-server', 'lease'):
-                return iter([{'address': '192.168.1.10'}])
+                return iter([{'address': '192.168.1.10', 'status': 'bound', 'dynamic': 'true'}])
             if args == ('ip', 'arp'):
-                return iter([{'address': '192.168.1.11'}])
+                return iter([{'address': '192.168.1.11', 'mac-address': 'AA:BB:CC:DD:EE:11', 'status': 'reachable', 'complete': 'true'}])
             return iter([])
 
         mock_api.path.side_effect = mock_path
@@ -135,7 +152,7 @@ class TestTools:
             if args == ("ip", "arp"):
                 raise RuntimeError("arp-error")
             if args == ("ip", "dhcp-server", "lease"):
-                return iter([{"address": "192.168.1.10"}, {"address": "bad-ip"}])
+                return iter([{"address": "192.168.1.10", "status": "bound", "dynamic": "true"}, {"address": "bad-ip"}])
             if args == ("ip", "address"):
                 return iter([{"address": "192.168.1.1/24"}, {"address": "bad-ip"}])
             if args == ("ip", "dns", "static"):
@@ -148,3 +165,34 @@ class TestTools:
         assert result["used_count"] == 3
         assert "192.168.1.1" not in result["free_ips"]
         assert "192.168.1.10" not in result["free_ips"]
+
+    def test_find_free_ips_ignores_waiting_dhcp_and_incomplete_arp_but_keeps_static(self, mock_get_api):
+        from mikrotik.tools import find_free_ips
+
+        mock_api = MagicMock()
+        mock_get_api.return_value = mock_api
+
+        def mock_path(*args):
+            if args == ("ip", "arp"):
+                return iter([
+                    {"address": "192.168.1.11", "mac-address": "AA:11", "status": "incomplete", "complete": "false"},
+                    {"address": "192.168.1.12", "mac-address": "AA:12", "status": "reachable", "complete": "true"},
+                ])
+            if args == ("ip", "dhcp-server", "lease"):
+                return iter([
+                    {"address": "192.168.1.10", "status": "waiting", "dynamic": "true"},
+                    {"address": "192.168.1.13", "status": "waiting", "dynamic": "false"},
+                ])
+            if args == ("ip", "address"):
+                return iter([])
+            if args == ("ip", "dns", "static"):
+                return iter([])
+            return iter([])
+
+        mock_api.path.side_effect = mock_path
+
+        result = find_free_ips("192.168.1.8/29")
+        assert "192.168.1.10" in result["free_ips"]
+        assert "192.168.1.11" in result["free_ips"]
+        assert "192.168.1.12" not in result["free_ips"]
+        assert "192.168.1.13" not in result["free_ips"]

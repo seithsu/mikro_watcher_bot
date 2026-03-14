@@ -32,6 +32,31 @@ class TestIpSorting:
 class TestArpDhcpScan:
     """Test _arp_dhcp_scan fallback scan."""
 
+    def test_active_arp_filter_rejects_incomplete_and_invalid(self):
+        from mikrotik.scan import _is_active_arp_entry
+
+        assert _is_active_arp_entry({
+            'mac-address': 'AA:BB:CC:DD:EE:01',
+            'complete': 'true',
+            'status': 'reachable',
+        }) is True
+        assert _is_active_arp_entry({
+            'mac-address': 'AA:BB:CC:DD:EE:01',
+            'complete': 'false',
+        }) is False
+        assert _is_active_arp_entry({
+            'mac-address': 'AA:BB:CC:DD:EE:01',
+            'status': 'incomplete',
+        }) is False
+        assert _is_active_arp_entry({
+            'mac-address': '00:00:00:00:00:00',
+            'complete': 'true',
+        }) is False
+        assert _is_active_arp_entry({
+            'mac-address': 'AA:BB:CC:DD:EE:01',
+            'invalid': 'true',
+        }) is False
+
     @patch('mikrotik.scan.pool')
     def test_fallback_returns_list(self, mock_pool):
         from mikrotik.scan import _arp_dhcp_scan
@@ -56,6 +81,42 @@ class TestArpDhcpScan:
         result = _arp_dhcp_scan('bridge')
         assert isinstance(result, list)
         assert len(result) >= 1
+
+    @patch('mikrotik.scan.pool')
+    def test_fallback_ignores_incomplete_arp_entries(self, mock_pool):
+        from mikrotik.scan import _arp_dhcp_scan
+
+        mock_api = MagicMock()
+        mock_pool.get_api.return_value = mock_api
+
+        mock_api.path.side_effect = [
+            [],
+            [
+                {
+                    'address': '192.168.1.20',
+                    'mac-address': 'AA:BB:CC:DD:EE:20',
+                    'interface': 'bridge',
+                    'complete': 'false',
+                    'status': 'incomplete',
+                },
+                {
+                    'address': '192.168.1.21',
+                    'mac-address': 'AA:BB:CC:DD:EE:21',
+                    'interface': 'bridge',
+                    'complete': 'true',
+                    'status': 'reachable',
+                },
+            ],
+        ]
+
+        result = _arp_dhcp_scan('bridge', include_dhcp_bound_only=False)
+        assert result == [{
+            'ip': '192.168.1.21',
+            'mac': 'AA:BB:CC:DD:EE:21',
+            'hostname': '-',
+            'interface': 'bridge',
+            'dns': '-',
+        }]
 
     @patch('mikrotik.scan.pool')
     def test_fallback_error_returns_empty_list(self, mock_pool):
@@ -181,12 +242,13 @@ class TestRunIpScan:
             {'ip': '192.168.1.1', 'mac': 'AA:BB:CC:DD:EE:00',
              'hostname': 'router', 'interface': 'bridge', 'dns': '-'},
         ]
+        mock_fallback.return_value = []
 
         result = run_ip_scan('bridge', duration=5)
         assert isinstance(result, list)
         assert len(result) == 1
         mock_ipscan.assert_called_once()
-        mock_fallback.assert_not_called()
+        mock_fallback.assert_called_once()
 
     @patch('mikrotik.scan._arp_dhcp_scan')
     @patch('mikrotik.scan._librouteros_ip_scan')
@@ -239,3 +301,47 @@ class TestRunIpScan:
 
         result = run_ip_scan('bridge')
         assert result[0]['hostname'] == 'HostA'
+
+    @patch('mikrotik.scan._arp_dhcp_scan')
+    @patch('mikrotik.scan._librouteros_ip_scan')
+    @patch('mikrotik.scan.pool')
+    def test_scan_merges_fallback_results_even_when_ipscan_succeeds(self, mock_pool, mock_ipscan, mock_fallback):
+        from mikrotik.scan import run_ip_scan
+
+        mock_api = MagicMock()
+        mock_pool.get_api.return_value = mock_api
+        mock_api.path.return_value = []
+
+        mock_ipscan.return_value = [
+            {'ip': '192.168.1.10', 'mac': 'AA:AA', 'hostname': 'PC1', 'interface': 'bridge', 'dns': '-'},
+        ]
+        mock_fallback.return_value = [
+            {'ip': '192.168.1.10', 'mac': 'AA:AA', 'hostname': 'PC1', 'interface': 'bridge', 'dns': '-'},
+            {'ip': '192.168.1.20', 'mac': 'BB:BB', 'hostname': 'Printer', 'interface': 'bridge', 'dns': '-'},
+        ]
+
+        result = run_ip_scan('bridge')
+
+        assert [item['ip'] for item in result] == ['192.168.1.10', '192.168.1.20']
+        assert result[1]['hostname'] == 'Printer'
+        mock_fallback.assert_called_once_with('bridge', include_dhcp_bound_only=False)
+
+    @patch('mikrotik.scan._arp_dhcp_scan')
+    @patch('mikrotik.scan._librouteros_ip_scan')
+    @patch('mikrotik.scan.pool')
+    def test_scan_does_not_pull_dhcp_only_entries_when_ipscan_succeeds(self, mock_pool, mock_ipscan, mock_fallback):
+        from mikrotik.scan import run_ip_scan
+
+        mock_api = MagicMock()
+        mock_pool.get_api.return_value = mock_api
+        mock_api.path.return_value = []
+
+        mock_ipscan.return_value = [
+            {'ip': '192.168.1.10', 'mac': 'AA:AA', 'hostname': 'PC1', 'interface': 'bridge', 'dns': '-'},
+        ]
+        mock_fallback.return_value = []
+
+        result = run_ip_scan('bridge')
+
+        assert [item['ip'] for item in result] == ['192.168.1.10']
+        mock_fallback.assert_called_once_with('bridge', include_dhcp_bound_only=False)

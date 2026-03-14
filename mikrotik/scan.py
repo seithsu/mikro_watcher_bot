@@ -16,6 +16,29 @@ logger = logging.getLogger(__name__)
 _scan_lock = threading.Lock()
 
 
+def _truthy(value):
+    return str(value).strip().lower() in {"true", "yes", "on", "1"}
+
+
+def _is_active_arp_entry(arp):
+    """Tentukan apakah entri ARP layak dianggap host aktif."""
+    mac = str(arp.get('mac-address', '') or '').strip()
+    if not mac or mac in {"00:00:00:00:00:00", "00-00-00-00-00-00"}:
+        return False
+
+    status = str(arp.get('status', '') or '').strip().lower()
+    if status in {"incomplete", "failed", "stale", "delay", "probe"}:
+        return False
+
+    if 'complete' in arp and not _truthy(arp.get('complete')):
+        return False
+
+    if _truthy(arp.get('invalid')) or _truthy(arp.get('disabled')):
+        return False
+
+    return True
+
+
 def _librouteros_ip_scan(interface, duration=10):
     """
     Real-time IP Scan menggunakan librouteros.
@@ -93,7 +116,7 @@ def _librouteros_ip_scan(interface, duration=10):
     return list(results.values())
 
 
-def _arp_dhcp_scan(interface):
+def _arp_dhcp_scan(interface, include_dhcp_bound_only=True):
     """
     Fallback scan: ARP table + DHCP leases.
     Digunakan jika librouteros ip-scan gagal.
@@ -127,6 +150,8 @@ def _arp_dhcp_scan(interface):
         for arp in arp_list:
             if (arp.get('interface') or '').lower() != interface.lower():
                 continue
+            if not _is_active_arp_entry(arp):
+                continue
 
             ip = arp.get('address', '')
             mac = arp.get('mac-address', '')
@@ -150,19 +175,22 @@ def _arp_dhcp_scan(interface):
         logger.error(f"Fallback: gagal ambil ARP: {e}")
         pool.reset()
 
-    # Tambahkan DHCP bound leases yang belum di ARP
-    for d in dhcp_list:
-        ip = d.get('address', '')
-        status = d.get('status', '')
-        if status == 'bound' and ip and ip not in results_dict:
-            hostname = d.get('host-name', '') or d.get('comment', '') or '-'
-            results_dict[ip] = {
-                'ip': ip,
-                'mac': d.get('mac-address', '-'),
-                'hostname': hostname,
-                'interface': interface,
-                'dns': '-',
-            }
+    if include_dhcp_bound_only:
+        # Tambahkan DHCP bound leases yang belum di ARP.
+        # Ini berguna saat ip-scan gagal total, tapi terlalu agresif jika
+        # dipakai untuk melengkapi hasil ip-scan yang sebenarnya sudah sukses.
+        for d in dhcp_list:
+            ip = d.get('address', '')
+            status = d.get('status', '')
+            if status == 'bound' and ip and ip not in results_dict:
+                hostname = d.get('host-name', '') or d.get('comment', '') or '-'
+                results_dict[ip] = {
+                    'ip': ip,
+                    'mac': d.get('mac-address', '-'),
+                    'hostname': hostname,
+                    'interface': interface,
+                    'dns': '-',
+                }
 
     return list(results_dict.values())
 
@@ -206,6 +234,20 @@ def run_ip_scan(interface, duration=10):
                     hostname = dhcp_mac_map.get(mac, '') or dhcp_ip_map.get(ip, '')
                     if hostname:
                         device['hostname'] = hostname
+            # Walau ip-scan berhasil, tetap merge dengan ARP+DHCP agar
+            # device yang tidak muncul di stream scan tetapi ada di ARP/DHCP
+            # tetap ikut terdeteksi pada hasil akhir.
+            try:
+                fallback_results = _arp_dhcp_scan(interface, include_dhcp_bound_only=False)
+                if fallback_results:
+                    existing_ips = {d.get('ip', '') for d in results if d.get('ip')}
+                    for device in fallback_results:
+                        ip = device.get('ip', '')
+                        if ip and ip not in existing_ips:
+                            results.append(device)
+                            existing_ips.add(ip)
+            except Exception as e:
+                logger.debug("Suppressed non-fatal exception: %s", e)
         else:
             # Step 2: Fallback ke ARP + DHCP
             logger.info(f"IP Scan: fallback ARP+DHCP pada {interface}...")
@@ -218,5 +260,3 @@ def run_ip_scan(interface, duration=10):
         except Exception as e:
             logger.debug("Suppressed non-fatal exception: %s", e)
         return results
-
-
