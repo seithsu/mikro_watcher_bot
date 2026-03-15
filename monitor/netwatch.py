@@ -435,7 +435,7 @@ async def task_monitor_netwatch():
             config.reload_runtime_overrides(min_interval=10)
             config.reload_router_env(min_interval=10)
             interval = int(getattr(config, "NETWATCH_INTERVAL", interval))
-            api_diag = await asyncio.to_thread(pool.connection_diagnostics)
+            api_diag = pool.connection_diagnostics()
             api_error = api_diag.get("last_error", "").strip()
             api_healthy = bool(api_diag.get("healthy", False))
 

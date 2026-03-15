@@ -279,18 +279,20 @@ class TestTaskApiHealthHelpers:
 
             time_values = iter([100.0, 100.5])
             monkeypatch.setattr(t.time, "time", lambda: next(time_values))
-            monkeypatch.setattr(t.asyncio, "to_thread", lambda func, *a, **k: func(*a, **k))
+            diag_calls = {"count": 0}
 
-            mock_with_timeout = AsyncMock(return_value={"healthy": False, "last_error": "auth failed"})
-            monkeypatch.setattr(t, "with_timeout", mock_with_timeout)
-            monkeypatch.setattr(t._pool, "connection_diagnostics", lambda: {"healthy": False, "last_error": "auth failed"})
+            def fake_diag():
+                diag_calls["count"] += 1
+                return {"healthy": False, "last_error": "auth failed"}
+
+            monkeypatch.setattr(t._pool, "connection_diagnostics", fake_diag)
 
             first = await t._get_api_health_cached(cache_ttl=5)
             second = await t._get_api_health_cached(cache_ttl=5)
 
             assert first == (False, "auth failed")
             assert second == (False, "auth failed")
-            mock_with_timeout.assert_awaited_once()
+            assert diag_calls["count"] == 1
         finally:
             t._API_HEALTH_CACHE.clear()
             t._API_HEALTH_CACHE.update(original_cache)
@@ -401,6 +403,12 @@ class TestTopBandwidthHelpers:
         assert "TOP BW CRITICAL" in alert_text
         assert "PC-1" in recovery_text
 
+    def test_queue_rate_to_mbps_converts_bytes_per_second(self):
+        import monitor.tasks as t
+
+        assert t._queue_rate_to_mbps(0) == 0.0
+        assert round(t._queue_rate_to_mbps(4_712_500), 1) == 37.7
+
     def test_normalize_top_bw_candidates_filters_and_sorts(self, monkeypatch):
         import monitor.tasks as t
 
@@ -411,7 +419,7 @@ class TestTopBandwidthHelpers:
         result = t._normalize_top_bw_candidates([
             {"name": "", "rx_rate": 100_000_000, "tx_rate": 0},
             {"name": "PC-WHITELIST", "rx_rate": 100_000_000, "tx_rate": 0},
-            {"name": "PC-NOISE", "rx_rate": 5_000_000, "tx_rate": 2_000_000},
+            {"name": "PC-NOISE", "rx_rate": 500_000, "tx_rate": 200_000},
             {"name": "PC-2", "rx_rate": 20_000_000, "tx_rate": 5_000_000},
             {"name": "PC-1", "rx_rate": 30_000_000, "tx_rate": 20_000_000},
         ])
@@ -498,7 +506,7 @@ class TestTopBandwidthHelpers:
         monkeypatch.setattr(t.logger, "warning", warn_log)
 
         await t._cek_per_host_traffic([{"name": "PC-A", "rx_rate": 25_000_000, "tx_rate": 5_000_000}])
-        await t._cek_per_host_traffic([{"name": "PC-A", "rx_rate": 5_000_000, "tx_rate": 1_000_000}])
+        await t._cek_per_host_traffic([{"name": "PC-A", "rx_rate": 500_000, "tx_rate": 100_000}])
 
         assert mock_send.await_count == 1
         assert "PC-A" not in t._alerted_hosts_traffic
@@ -751,29 +759,16 @@ class TestMonitorTaskLoops:
         debug_log.assert_called()
 
     @pytest.mark.asyncio
-    async def test_task_monitor_system_top_queue_exception_debug_logged(self, monkeypatch):
+    async def test_task_monitor_top_bandwidth_top_queue_exception_debug_logged(self, monkeypatch):
         import monitor.tasks as t
         import mikrotik
 
-        monkeypatch.setattr(t.cfg, "MONITOR_INTERVAL", 1, raising=False)
         monkeypatch.setattr(t.cfg, "reload_runtime_overrides", lambda min_interval=10: None, raising=False)
         monkeypatch.setattr(t.cfg, "reload_router_env", lambda min_interval=10: None, raising=False)
-        monkeypatch.setattr(t.cfg, "TRAFFIC_THRESHOLD_MBPS", 0, raising=False)
-        monkeypatch.setattr(t.cfg, "TOP_BW_ALERT_ENABLED", True, raising=False)
         monkeypatch.setattr(t, "_pause_if_api_unavailable", AsyncMock(return_value=False))
-        monkeypatch.setattr(t.database, "cleanup_old_data", MagicMock(return_value=0))
-        monkeypatch.setattr(t.database, "close_stale_incidents", MagicMock(return_value=0))
-        monkeypatch.setattr(t._pool, "health_check", lambda: True)
-        monkeypatch.setattr(t.time, "time", lambda: 1000.0)
-        monkeypatch.setattr(t, "get_status", lambda: {'cpu': '10', 'ram_total': '100', 'ram_free': '50', 'uptime': '1d', 'version': '7.14'})
-        monkeypatch.setattr(t, "get_interfaces", lambda: [])
-        monkeypatch.setattr(t, "cek_cpu_ram", AsyncMock())
-        monkeypatch.setattr(t, "cek_disk", AsyncMock())
-        monkeypatch.setattr(t, "cek_interface", AsyncMock())
-        monkeypatch.setattr(t, "cek_uptime_anomaly", AsyncMock())
-        monkeypatch.setattr(t, "cek_firmware", AsyncMock())
-        monkeypatch.setattr(t, "cek_vpn_tunnels", AsyncMock())
-        monkeypatch.setattr(t, "_cek_per_host_traffic", AsyncMock())
+        monkeypatch.setattr(t.cfg, "TOP_BW_ALERT_INTERVAL", 5, raising=False)
+        monkeypatch.setattr(t.cfg, "TOP_BW_ALERT_ENABLED", True, raising=False)
+        monkeypatch.setattr(t.cfg, "TRAFFIC_LEAK_THRESHOLD_MBPS", 0, raising=False)
         monkeypatch.setattr(mikrotik, "get_top_queues", lambda _n: (_ for _ in ()).throw(RuntimeError("top fail")))
 
         async def fake_with_timeout(coro, timeout=10, default=None, **kwargs):
@@ -791,9 +786,59 @@ class TestMonitorTaskLoops:
         monkeypatch.setattr(t.asyncio, "sleep", stop_sleep)
 
         with pytest.raises(asyncio.CancelledError):
-            await t.task_monitor_system()
+            await t.task_monitor_top_bandwidth()
 
         assert any("Top queue metrics error" in str(call.args[0]) for call in debug_log.call_args_list)
+
+    @pytest.mark.asyncio
+    async def test_task_monitor_traffic_runs_top_queue_alert_engine(self, monkeypatch):
+        import monitor.tasks as t
+
+        monkeypatch.setattr(t, "_pause_if_api_unavailable", AsyncMock(return_value=False))
+        monkeypatch.setattr(t.cfg, "MONITOR_IGNORE_IFACE", [], raising=False)
+        monkeypatch.setattr(t.cfg, "reload_runtime_overrides", lambda min_interval=10: None, raising=False)
+        monkeypatch.setattr(t.cfg, "reload_router_env", lambda min_interval=10: None, raising=False)
+        monkeypatch.setattr(t, "get_interfaces", lambda: [{"name": "ether1", "running": True}])
+        monkeypatch.setattr(t, "get_traffic", lambda _name: {"rx_bps": 1234, "tx_bps": 5678})
+        monkeypatch.setattr(t.database, "record_metrics_batch", MagicMock())
+        monkeypatch.setattr(t, "_cek_per_host_traffic", AsyncMock())
+
+        async def fake_with_timeout(coro, timeout=10, default=None, **kwargs):
+            return await coro if asyncio.iscoroutine(coro) else coro
+
+        async def stop_sleep(_seconds):
+            raise asyncio.CancelledError()
+
+        monkeypatch.setattr(t, "with_timeout", fake_with_timeout)
+        monkeypatch.setattr(t.asyncio, "sleep", stop_sleep)
+        monkeypatch.setattr("mikrotik.get_top_queues", lambda _n: [{"name": "PC-1", "rx_rate": 40_000_000, "tx_rate": 5_000_000}])
+
+        with pytest.raises(asyncio.CancelledError):
+            await t.task_monitor_traffic()
+
+        t._cek_per_host_traffic.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_task_monitor_top_bandwidth_runs_queue_engine(self, monkeypatch):
+        import monitor.tasks as t
+
+        monkeypatch.setattr(t, "_pause_if_api_unavailable", AsyncMock(return_value=False))
+        monkeypatch.setattr(t.cfg, "TOP_BW_ALERT_INTERVAL", 5, raising=False)
+        monkeypatch.setattr(t.cfg, "TOP_BW_ALERT_ENABLED", True, raising=False)
+        monkeypatch.setattr(t.cfg, "TRAFFIC_LEAK_THRESHOLD_MBPS", 0, raising=False)
+        monkeypatch.setattr(t.cfg, "reload_runtime_overrides", lambda min_interval=10: None, raising=False)
+        monkeypatch.setattr(t.cfg, "reload_router_env", lambda min_interval=10: None, raising=False)
+        monkeypatch.setattr(t, "_record_top_queue_metrics_and_alerts", AsyncMock())
+
+        async def stop_sleep(_seconds):
+            raise asyncio.CancelledError()
+
+        monkeypatch.setattr(t.asyncio, "sleep", stop_sleep)
+
+        with pytest.raises(asyncio.CancelledError):
+            await t.task_monitor_top_bandwidth()
+
+        t._record_top_queue_metrics_and_alerts.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_task_monitor_system_outer_error_sends_alert(self, monkeypatch):
@@ -830,6 +875,7 @@ class TestMonitorTaskLoops:
         import monitor.tasks as t
 
         monkeypatch.setattr(t, "_pause_if_api_unavailable", AsyncMock(return_value=False))
+        monkeypatch.setattr(t, "_record_top_queue_metrics_and_alerts", AsyncMock())
         monkeypatch.setattr(t.cfg, "MONITOR_IGNORE_IFACE", ["lo"], raising=False)
         monkeypatch.setattr(t.cfg, "reload_runtime_overrides", lambda min_interval=10: None, raising=False)
         monkeypatch.setattr(t.cfg, "reload_router_env", lambda min_interval=10: None, raising=False)
@@ -864,6 +910,7 @@ class TestMonitorTaskLoops:
         import monitor.tasks as t
 
         monkeypatch.setattr(t, "_pause_if_api_unavailable", AsyncMock(return_value=False))
+        monkeypatch.setattr(t, "_record_top_queue_metrics_and_alerts", AsyncMock())
         monkeypatch.setattr(t.cfg, "MONITOR_IGNORE_IFACE", [], raising=False)
         monkeypatch.setattr(t.cfg, "reload_runtime_overrides", lambda min_interval=10: None, raising=False)
         monkeypatch.setattr(t.cfg, "reload_router_env", lambda min_interval=10: None, raising=False)
@@ -903,6 +950,7 @@ class TestMonitorTaskLoops:
         import monitor.tasks as t
 
         monkeypatch.setattr(t, "_pause_if_api_unavailable", AsyncMock(return_value=False))
+        monkeypatch.setattr(t, "_record_top_queue_metrics_and_alerts", AsyncMock())
         monkeypatch.setattr(t.cfg, "reload_runtime_overrides", lambda min_interval=10: None, raising=False)
         monkeypatch.setattr(t.cfg, "reload_router_env", lambda min_interval=10: None, raising=False)
         monkeypatch.setattr(t, "get_interfaces", lambda: [])
@@ -925,6 +973,7 @@ class TestMonitorTaskLoops:
 
         monkeypatch.setattr(t.cfg, "reload_runtime_overrides", lambda min_interval=10: None, raising=False)
         monkeypatch.setattr(t.cfg, "reload_router_env", lambda min_interval=10: None, raising=False)
+        monkeypatch.setattr(t, "_record_top_queue_metrics_and_alerts", AsyncMock())
         calls = {"n": 0}
 
         async def fake_pause(*_args, **_kwargs):
@@ -943,6 +992,7 @@ class TestMonitorTaskLoops:
         import monitor.tasks as t
 
         monkeypatch.setattr(t, "_pause_if_api_unavailable", AsyncMock(return_value=False))
+        monkeypatch.setattr(t, "_record_top_queue_metrics_and_alerts", AsyncMock())
         monkeypatch.setattr(t.cfg, "MONITOR_IGNORE_IFACE", ["ether1"], raising=False)
         monkeypatch.setattr(t.cfg, "reload_runtime_overrides", lambda min_interval=10: None, raising=False)
         monkeypatch.setattr(t.cfg, "reload_router_env", lambda min_interval=10: None, raising=False)

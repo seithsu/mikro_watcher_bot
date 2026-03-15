@@ -121,13 +121,11 @@ async def _get_api_health_cached(cache_ttl=5):
     if (now - float(_API_HEALTH_CACHE.get("ts", 0.0))) < max(1, int(cache_ttl)):
         return bool(_API_HEALTH_CACHE.get("healthy", False)), str(_API_HEALTH_CACHE.get("last_error", ""))
 
-    diag = await with_timeout(
-        asyncio.to_thread(_pool.connection_diagnostics),
-        timeout=8,
-        default={},
-        log_key="tasks:connection_diagnostics",
-        warn_every_sec=300,
-    )
+    try:
+        diag = _pool.connection_diagnostics()
+    except Exception as e:
+        logger.debug("connection_diagnostics direct call gagal: %s", e)
+        diag = {}
     healthy = bool(isinstance(diag, dict) and diag.get("healthy", False))
     last_error = str((diag or {}).get("last_error", "")).strip() if isinstance(diag, dict) else ""
     _API_HEALTH_CACHE["ts"] = now
@@ -196,7 +194,7 @@ async def _get_router_logs_snapshot(fetch_lines, timeout=15, cache_ttl=180):
         timeout=timeout,
         default=None,
         log_key="tasks:get_mikrotik_log",
-        warn_every_sec=300,
+        warn_every_sec=900,
     )
     now = time.time()
     if logs is not None:
@@ -468,36 +466,6 @@ async def task_monitor_system():
                     else:
                         _last_alerts[f"traffic_{iface['name']}"] = False
 
-            # Record top queue metrics + cek per-host traffic leak
-            try:
-                from mikrotik import get_top_queues
-                top = await with_timeout(
-                    asyncio.to_thread(get_top_queues, 10),
-                    timeout=10,
-                    log_key="tasks:get_top_queues",
-                    warn_every_sec=300,
-                )
-                if top is None:
-                    top = []
-
-                if top:
-                    queue_batch = []
-                    for q in top:
-                        # Pastikan q adalah dict  (fix logika getattr yang salah)
-                        if not isinstance(q, dict):
-                            continue
-                        safe_name = q.get('name', '').replace(' ', '_')[:50]
-                        total_rate = q.get('rx_rate', 0) + q.get('tx_rate', 0)
-                        queue_batch.append(('bw_' + safe_name, total_rate, q.get('name', '')))
-                    if queue_batch:
-                        await asyncio.to_thread(database.record_metrics_batch, queue_batch)
-
-                # Per-host traffic leak / top bandwidth alert
-                if cfg.TOP_BW_ALERT_ENABLED or cfg.TRAFFIC_LEAK_THRESHOLD_MBPS > 0:
-                    await _cek_per_host_traffic(top)
-            except Exception as eq:
-                logger.debug(f"Top queue metrics error: {eq}")
-
         except Exception as e:
             logger.error(f"[ERR] System Monitor: {e}")
             now = time.time()
@@ -525,6 +493,14 @@ def _classify_bw_level(total_mbps):
     if total_mbps >= warn:
         return "warning"
     return None
+
+
+def _queue_rate_to_mbps(raw_rate):
+    """Konversi rate simple queue RouterOS (byte/s) ke Mbps."""
+    try:
+        return (float(raw_rate or 0) * 8.0) / 1_000_000
+    except (TypeError, ValueError):
+        return 0.0
 
 
 def _build_top_bw_alert_message(host_name, rank, level, total_mbps, rx_mbps, tx_mbps, hits):
@@ -560,9 +536,9 @@ def _normalize_top_bw_candidates(queue_list):
         if total_bps <= 0:
             continue
 
-        rx_mbps = rx_bps / 1_000_000
-        tx_mbps = tx_bps / 1_000_000
-        total_mbps = total_bps / 1_000_000
+        rx_mbps = _queue_rate_to_mbps(rx_bps)
+        tx_mbps = _queue_rate_to_mbps(tx_bps)
+        total_mbps = _queue_rate_to_mbps(total_bps)
         # Filter asimetris/noise: minimal salah satu sisi melewati ambang min.
         if rx_mbps < cfg.TOP_BW_ALERT_MIN_RX_MBPS and tx_mbps < cfg.TOP_BW_ALERT_MIN_TX_MBPS:
             continue
@@ -702,7 +678,7 @@ async def _cek_per_host_traffic(queue_list):
 
     # Legacy mode (backward-compatible) jika engine baru dimatikan.
     global _alerted_hosts_traffic
-    threshold_bps = cfg.TRAFFIC_LEAK_THRESHOLD_MBPS * 1_000_000
+    threshold_bps = (cfg.TRAFFIC_LEAK_THRESHOLD_MBPS * 1_000_000) / 8.0
 
     for q in queue_list:
         if not isinstance(q, dict):
@@ -717,9 +693,9 @@ async def _cek_per_host_traffic(queue_list):
 
         if total_rate >= threshold_bps:
             if name not in _alerted_hosts_traffic:
-                rx_mb = rx_rate / 1_000_000
-                tx_mb = tx_rate / 1_000_000
-                total_mb = total_rate / 1_000_000
+                rx_mb = _queue_rate_to_mbps(rx_rate)
+                tx_mb = _queue_rate_to_mbps(tx_rate)
+                total_mb = _queue_rate_to_mbps(total_rate)
                 await kirim_ke_semua_admin(
                     f"🚨 <b>[TRAFFIC LEAK] {name}</b>\n\n"
                     f"Total: <b>{total_mb:.1f} Mbps</b> (threshold: {cfg.TRAFFIC_LEAK_THRESHOLD_MBPS} Mbps)\n"
@@ -733,6 +709,34 @@ async def _cek_per_host_traffic(queue_list):
                 logger.warning(f"[TRAFFIC LEAK] {name}: {total_mb:.1f} Mbps")
         else:
             _alerted_hosts_traffic.discard(name)
+
+
+async def _record_top_queue_metrics_and_alerts():
+    """Rekam top queue metrics dan evaluasi alert bandwidth per-host."""
+    from mikrotik import get_top_queues
+
+    top = await with_timeout(
+        asyncio.to_thread(get_top_queues, 10),
+        timeout=10,
+        log_key="tasks:get_top_queues",
+        warn_every_sec=300,
+    )
+    if top is None:
+        top = []
+
+    if top:
+        queue_batch = []
+        for q in top:
+            if not isinstance(q, dict):
+                continue
+            safe_name = q.get('name', '').replace(' ', '_')[:50]
+            total_rate = q.get('rx_rate', 0) + q.get('tx_rate', 0)
+            queue_batch.append(('bw_' + safe_name, total_rate, q.get('name', '')))
+        if queue_batch:
+            await asyncio.to_thread(database.record_metrics_batch, queue_batch)
+
+    if cfg.TOP_BW_ALERT_ENABLED or cfg.TRAFFIC_LEAK_THRESHOLD_MBPS > 0:
+        await _cek_per_host_traffic(top)
 
 
 async def task_monitor_logs():
@@ -790,7 +794,7 @@ async def task_monitor_logs():
             for u in getattr(cfg, "API_ACCOUNT_SKIP_USERS", []):
                 if str(u).strip():
                     _api_skip_users.add(str(u).strip().lower())
-            logs = await _get_router_logs_snapshot(fetch_lines, timeout=15)
+            logs = await _get_router_logs_snapshot(fetch_lines, timeout=15, cache_ttl=300)
             if logs is None:
                 await asyncio.sleep(interval)
                 continue
@@ -1073,6 +1077,31 @@ async def task_monitor_traffic():
             logger.debug(f"[ERR] Traffic Monitor: {e}")
 
         await asyncio.sleep(_TRAFFIC_INTERVAL)
+
+
+async def task_monitor_top_bandwidth():
+    """Task 5b: Poll top bandwidth queue lebih rapat agar burst pendek tetap terdeteksi."""
+    interval = max(5, int(getattr(cfg, "TOP_BW_ALERT_INTERVAL", 15)))
+    logger.info(f"[INIT] Top BW Alert Monitor berjalan (Interval: {interval}s)")
+
+    while True:
+        try:
+            apply_runtime_reset_if_signaled()
+            cfg.reload_runtime_overrides(min_interval=10)
+            cfg.reload_router_env(min_interval=10)
+            interval = max(5, int(getattr(cfg, "TOP_BW_ALERT_INTERVAL", interval)))
+            if await _pause_if_api_unavailable("top_bw", interval):
+                continue
+
+            if cfg.TOP_BW_ALERT_ENABLED or cfg.TRAFFIC_LEAK_THRESHOLD_MBPS > 0:
+                try:
+                    await _record_top_queue_metrics_and_alerts()
+                except Exception as eq:
+                    logger.debug(f"Top queue metrics error: {eq}")
+        except Exception as e:
+            logger.debug(f"[ERR] Top BW Monitor: {e}")
+
+        await asyncio.sleep(interval)
 
 
 async def task_monitor_alert_maintenance():

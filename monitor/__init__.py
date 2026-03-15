@@ -19,7 +19,7 @@ async def main_async():
     """Main Loop Async dengan graceful shutdown."""
     from .tasks import (
         task_monitor_system, task_monitor_logs, task_monitor_dhcp_arp,
-        task_monitor_traffic, task_monitor_alert_maintenance
+        task_monitor_traffic, task_monitor_top_bandwidth, task_monitor_alert_maintenance
     )
     from .netwatch import task_monitor_netwatch
 
@@ -37,6 +37,7 @@ async def main_async():
     tasks = [
         asyncio.create_task(task_monitor_system()),
         asyncio.create_task(task_monitor_traffic()),  # B10-RC1: dedicated traffic task (60s interval)
+        asyncio.create_task(task_monitor_top_bandwidth()),
         asyncio.create_task(task_monitor_logs()),
         asyncio.create_task(task_monitor_netwatch()),
         asyncio.create_task(task_monitor_dhcp_arp()),
@@ -94,6 +95,7 @@ def main():
     logger.info("=" * 40)
     logger.info(f"System Check: Tiap {interval_menit} menit")
     logger.info("Traffic Check: Tiap 60 detik")
+    logger.info(f"Top BW Check: Tiap {max(5, int(getattr(cfg, 'TOP_BW_ALERT_INTERVAL', 15)))} detik")
     logger.info(f"Log Check   : Tiap {int(getattr(cfg, 'MONITOR_LOG_INTERVAL', MONITOR_LOG_INTERVAL))} detik")
     logger.info("Alert Maint : Tiap 20 detik")
     logger.info(f"Admin IDs   : {admin_list}")

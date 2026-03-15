@@ -137,7 +137,7 @@ async def _get_device_header():
     api_diag = {"healthy": False, "last_error": ""}
     try:
         from mikrotik.connection import pool
-        api_diag = await asyncio.to_thread(pool.connection_diagnostics)
+        api_diag = pool.connection_diagnostics()
     except Exception:
         api_diag = {"healthy": False, "last_error": ""}
 
@@ -550,7 +550,7 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         from mikrotik.connection import pool
         state = await asyncio.to_thread(read_state_json)
-        api_diag = await asyncio.to_thread(pool.connection_diagnostics)
+        api_diag = pool.connection_diagnostics()
         api_connected = bool(api_diag.get("healthy", False)) and state.get("api_connected", True) is not False
 
         if not api_connected:

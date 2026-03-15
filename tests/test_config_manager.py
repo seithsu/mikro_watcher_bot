@@ -1,4 +1,4 @@
-# ============================================
+﻿# ============================================
 # TEST_CONFIG_MANAGER - Tests for services/config_manager.py
 # ============================================
 
@@ -118,10 +118,11 @@ class TestConfigManager:
         monkeypatch.setattr(config_manager, '_CONFIG_FILE', config_file)
 
         all_configs = config_manager.get_all_configs()
-        assert '🚨 Top BW Alert' in all_configs
-        keys = [item['key'] for item in all_configs['🚨 Top BW Alert']]
+        category = next(name for name in all_configs if 'Top BW Alert' in name)
+        keys = [item['key'] for item in all_configs[category]]
         assert 'TOP_BW_ALERT_WARN_MBPS' in keys
         assert 'TOP_BW_ALERT_CRIT_MBPS' in keys
+        assert 'TOP_BW_ALERT_INTERVAL' in keys
 
         with patch('core.database.audit_log', MagicMock()):
             config_manager.set_config('TOP_BW_ALERT_CRIT_MBPS', '120', 1, 'tester')
@@ -140,9 +141,9 @@ class TestConfigManager:
         monkeypatch.setattr(config_manager, '_CONFIG_FILE', config_file)
 
         all_configs = config_manager.get_all_configs()
-        monitoring_keys = [item['key'] for item in all_configs['⚙️ Monitoring']]
-        alert_keys = [item['key'] for item in all_configs['🔔 Alert']]
-        rate_keys = [item['key'] for item in all_configs['🛡️ Rate Limit']]
+        monitoring_keys = [item['key'] for item in all_configs['âš™ï¸ Monitoring']]
+        alert_keys = [item['key'] for item in all_configs['ðŸ”” Alert']]
+        rate_keys = [item['key'] for item in all_configs['ðŸ›¡ï¸ Rate Limit']]
 
         assert 'NETWATCH_INTERVAL' in monitoring_keys
         assert 'PING_COUNT' in monitoring_keys
@@ -213,3 +214,4 @@ class TestConfigManager:
 
         with config_manager._config_lock(timeout=0.2, poll_interval=0.01):
             assert lock_file.exists()
+

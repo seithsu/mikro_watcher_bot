@@ -17,6 +17,7 @@ async def test_main_async_runs_all_tasks_once(monkeypatch):
 
     monkeypatch.setattr(tasks, "task_monitor_system", _tick)
     monkeypatch.setattr(tasks, "task_monitor_traffic", _tick)
+    monkeypatch.setattr(tasks, "task_monitor_top_bandwidth", _tick)
     monkeypatch.setattr(tasks, "task_monitor_logs", _tick)
     monkeypatch.setattr(tasks, "task_monitor_dhcp_arp", _tick)
     monkeypatch.setattr(tasks, "task_monitor_alert_maintenance", _tick)
@@ -26,7 +27,7 @@ async def test_main_async_runs_all_tasks_once(monkeypatch):
     monkeypatch.setattr(mon.asyncio, "get_event_loop", lambda: fake_signal_loop)
 
     await mon.main_async()
-    assert called["count"] == 6
+    assert called["count"] == 7
 
 
 def test_main_initializes_and_runs_with_alert_gate(monkeypatch):
@@ -36,6 +37,7 @@ def test_main_initializes_and_runs_with_alert_gate(monkeypatch):
         ("MIKROTIK_TLS_VERIFY", True),
         ("MONITOR_INTERVAL", 300),
         ("MONITOR_LOG_INTERVAL", 30),
+        ("TOP_BW_ALERT_INTERVAL", 15),
         ("ADMIN_IDS", [123456]),
     ]
     for key, val in cfg_reload:

@@ -302,11 +302,33 @@ class MikroTikConnection:
         """Ringkasan status koneksi terakhir untuk UI/monitoring."""
         now = time.time()
         wait_left = max(0.0, float(self._next_connect_allowed_ts) - now)
+        local_api = getattr(self._local, "_api", None)
+        local_seen_ver = getattr(self._local, "_reset_version_seen", -1)
+        local_connected_at = float(getattr(self._local, "_connected_at", 0) or 0)
+        local_api_valid = local_api is not None and local_seen_ver == self._reset_version
+
+        max_age = self._connection_max_age_sec()
+        if local_api_valid and max_age > 0 and local_connected_at > 0:
+            local_age = max(0.0, now - local_connected_at)
+            if local_age > max_age:
+                local_api_valid = False
+
+        active_connections = max(0, int(self._active_connections))
+        healthy = bool(
+            wait_left <= 0.0
+            and (
+                active_connections > 0
+                or local_api_valid
+                or not str(self._last_connect_error or "").strip()
+            )
+        )
         return {
-            "healthy": self.health_check(),
+            "healthy": healthy,
             "fail_count": int(self._connect_fail_count),
             "backoff_seconds": round(wait_left, 1),
             "last_error": str(self._last_connect_error or ""),
+            "active_connections": active_connections,
+            "has_local_api": bool(local_api_valid),
         }
 
 

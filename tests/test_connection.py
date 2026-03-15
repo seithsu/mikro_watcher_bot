@@ -385,11 +385,39 @@ class TestConnectionHelpers:
             result = await conn.execute_async(("system", "resource"), "print")
         assert result == [{"ok": True}]
 
-        with patch.object(conn, "health_check", return_value=True):
-            conn._connect_fail_count = 2
-            conn._next_connect_allowed_ts = time.time() + 5
-            conn._last_connect_error = "boom"
-            diag = conn.connection_diagnostics()
+        conn._local._api = MagicMock()
+        conn._local._connected_at = time.time()
+        conn._local._reset_version_seen = conn._reset_version
+        conn._active_connections = 1
+        conn._connect_fail_count = 2
+        conn._next_connect_allowed_ts = 0.0
+        conn._last_connect_error = "boom"
+        diag = conn.connection_diagnostics()
         assert diag["healthy"] is True
         assert diag["fail_count"] == 2
         assert diag["last_error"] == "boom"
+        assert diag["active_connections"] == 1
+        assert diag["has_local_api"] is True
+
+    def test_connection_diagnostics_does_not_call_health_check(self):
+        conn = _fresh_conn()
+        conn._active_connections = 1
+        conn._next_connect_allowed_ts = 0.0
+
+        with patch.object(conn, "health_check", side_effect=AssertionError("must not be called")):
+            diag = conn.connection_diagnostics()
+
+        assert diag["healthy"] is True
+        assert diag["active_connections"] == 1
+        assert diag["has_local_api"] is False
+
+    def test_connection_diagnostics_cold_start_without_error_is_healthy(self):
+        conn = _fresh_conn()
+        conn._active_connections = 0
+        conn._next_connect_allowed_ts = 0.0
+        conn._last_connect_error = ""
+
+        diag = conn.connection_diagnostics()
+
+        assert diag["healthy"] is True
+        assert diag["active_connections"] == 0
