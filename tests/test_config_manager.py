@@ -123,6 +123,7 @@ class TestConfigManager:
         assert 'TOP_BW_ALERT_WARN_MBPS' in keys
         assert 'TOP_BW_ALERT_CRIT_MBPS' in keys
         assert 'TOP_BW_ALERT_INTERVAL' in keys
+        assert 'TOP_BW_ALERT_IGNORE_QUEUES' in keys
 
         with patch('core.database.audit_log', MagicMock()):
             config_manager.set_config('TOP_BW_ALERT_CRIT_MBPS', '120', 1, 'tester')
@@ -133,6 +134,14 @@ class TestConfigManager:
         with open(config_file, 'r', encoding='utf-8') as f:
             data = json.load(f)
         assert data['TOP_BW_ALERT_WARN_MBPS'] == 80
+
+        with patch('core.database.audit_log', MagicMock()):
+            success, _ = config_manager.set_config('TOP_BW_ALERT_IGNORE_QUEUES', 'TOTAL-BANDWIDTH,GLOBAL-QUEUE', 1, 'tester')
+        assert success is True
+
+        with open(config_file, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        assert data['TOP_BW_ALERT_IGNORE_QUEUES'] == 'TOTAL-BANDWIDTH,GLOBAL-QUEUE'
 
     def test_advanced_netwatch_keys_visible(self, tmp_path, monkeypatch):
         """Key tuning netwatch/retry harus muncul di /config."""

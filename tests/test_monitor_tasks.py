@@ -415,10 +415,13 @@ class TestTopBandwidthHelpers:
         monkeypatch.setattr(t.cfg, "TRAFFIC_LEAK_WHITELIST", ["PC-WHITELIST"])
         monkeypatch.setattr(t.cfg, "TOP_BW_ALERT_MIN_RX_MBPS", 10)
         monkeypatch.setattr(t.cfg, "TOP_BW_ALERT_MIN_TX_MBPS", 10)
+        monkeypatch.setattr(t.cfg, "TOP_BW_ALERT_IGNORE_QUEUES", ["TOTAL-BANDWIDTH"], raising=False)
 
         result = t._normalize_top_bw_candidates([
             {"name": "", "rx_rate": 100_000_000, "tx_rate": 0},
             {"name": "PC-WHITELIST", "rx_rate": 100_000_000, "tx_rate": 0},
+            {"name": "TOTAL-BANDWIDTH", "target": "192.168.3.0/24", "rx_rate": 100_000_000, "tx_rate": 0},
+            {"name": "PC-AGGREGATE", "target": "10.10.10.0/24", "rx_rate": 100_000_000, "tx_rate": 0},
             {"name": "PC-NOISE", "rx_rate": 500_000, "tx_rate": 200_000},
             {"name": "PC-2", "rx_rate": 20_000_000, "tx_rate": 5_000_000},
             {"name": "PC-1", "rx_rate": 30_000_000, "tx_rate": 20_000_000},

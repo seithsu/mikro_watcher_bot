@@ -52,6 +52,7 @@ _CONFIGURABLE = {
     'TOP_BW_ALERT_MIN_TX_MBPS': {'type': int, 'min': 0, 'max': 1000000, 'label': 'Top BW Alert: Min TX (Mbps)'},
     'TOP_BW_ALERT_MIN_RX_MBPS': {'type': int, 'min': 0, 'max': 1000000, 'label': 'Top BW Alert: Min RX (Mbps)'},
     'TOP_BW_ALERT_INTERVAL': {'type': int, 'min': 5, 'max': 3600, 'label': 'Top BW Alert: Interval (detik)'},
+    'TOP_BW_ALERT_IGNORE_QUEUES': {'type': str, 'label': 'Top BW Alert: Ignore Queue Names'},
     'DAILY_REPORT_HOUR': {'type': int, 'min': 0, 'max': 23, 'label': 'Daily Report Jam'},
     'ALERT_ESCALATION_MINUTES': {'type': int, 'min': 1, 'max': 10000, 'label': 'Alert Escalation (menit)'},
     'ALERT_DIGEST_THRESHOLD': {'type': int, 'min': 1, 'max': 10000, 'label': 'Digest Threshold'},
@@ -86,6 +87,7 @@ _CATEGORIES = {
         'TOP_BW_ALERT_MIN_TX_MBPS',
         'TOP_BW_ALERT_MIN_RX_MBPS',
         'TOP_BW_ALERT_INTERVAL',
+        'TOP_BW_ALERT_IGNORE_QUEUES',
     ],
     '🕐 Schedule': ['DAILY_REPORT_HOUR'],
     '🛡️ Rate Limit': ['RATE_LIMIT_PER_MINUTE', 'MIKROTIK_RESET_ALL_COOLDOWN_SEC'],
@@ -193,7 +195,7 @@ def _sanitize_overrides(overrides):
                 typed = meta['type'](value)
             except (TypeError, ValueError):
                 continue
-            if typed < meta['min'] or typed > meta['max']:
+            if meta.get('min') is not None and meta.get('max') is not None and (typed < meta['min'] or typed > meta['max']):
                 continue
             clean[key] = typed
     return clean
@@ -203,7 +205,10 @@ def _apply_overrides_on_startup():
     overrides = _load_overrides()
     for key, value in overrides.items():
         if key in _CONFIGURABLE:
-            setattr(_cfg_module, key, value)
+            if key == 'TOP_BW_ALERT_IGNORE_QUEUES':
+                setattr(_cfg_module, key, [x.strip() for x in str(value).split(',') if x.strip()])
+            else:
+                setattr(_cfg_module, key, value)
 
 # Auto-apply overrides at import time (moved to bottom of file)
 def _load_overrides():
@@ -313,7 +318,7 @@ def set_config(key, value, admin_id=None, username=None):
         except (ValueError, TypeError):
             return False, f"Nilai harus berupa {meta['type'].__name__}."
 
-        if typed_value < meta['min'] or typed_value > meta['max']:
+        if meta.get('min') is not None and meta.get('max') is not None and (typed_value < meta['min'] or typed_value > meta['max']):
             return False, f"Nilai harus antara {meta['min']} - {meta['max']}."
 
     import core.config as cfg
@@ -335,7 +340,10 @@ def set_config(key, value, admin_id=None, username=None):
     _save_overrides(overrides)
     
     # Apply to running config module
-    setattr(cfg, key, typed_value)
+    if key == 'TOP_BW_ALERT_IGNORE_QUEUES':
+        setattr(cfg, key, [x.strip() for x in str(typed_value).split(',') if x.strip()])
+    else:
+        setattr(cfg, key, typed_value)
     
     # Audit log
     try:

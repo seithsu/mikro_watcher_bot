@@ -518,6 +518,29 @@ def _build_top_bw_recovery_message(host_name):
     return f"✅ <b>[TOP BW RECOVERY] {host_name}</b>\n\nTraffic kembali normal."
 
 
+def _should_skip_top_bw_queue(queue_item):
+    """Skip queue agregat/ignored agar top bandwidth fokus ke host nyata."""
+    if not isinstance(queue_item, dict):
+        return True
+
+    name = str(queue_item.get('name', '')).strip()
+    target = str(queue_item.get('target', '')).strip()
+    ignore_names = {str(x).strip().lower() for x in getattr(cfg, "TOP_BW_ALERT_IGNORE_QUEUES", []) if str(x).strip()}
+
+    if name and name.lower() in ignore_names:
+        return True
+
+    if "/" in target:
+        try:
+            net = ipaddress.ip_network(target, strict=False)
+            if net.prefixlen < 32:
+                return True
+        except ValueError:
+            pass
+
+    return False
+
+
 def _normalize_top_bw_candidates(queue_list):
     """Normalisasi queue list menjadi kandidat terurut untuk evaluasi top-N."""
     candidates = []
@@ -528,6 +551,8 @@ def _normalize_top_bw_candidates(queue_list):
         if not name:
             continue
         if name in cfg.TRAFFIC_LEAK_WHITELIST:
+            continue
+        if _should_skip_top_bw_queue(q):
             continue
 
         rx_bps = float(q.get('rx_rate', 0) or 0)
