@@ -32,6 +32,7 @@ logger = logging.getLogger(__name__)
 _LOCAL_IP_CACHE = {"ips": set(), "ts": 0.0}
 _API_HEALTH_CACHE = {"ts": 0.0, "healthy": True, "last_error": ""}
 _API_PAUSE_LOG_TS = {}
+_API_HEAL_ATTEMPT_TS = 0.0
 _INTERFACES_CACHE = {"ts": 0.0, "items": []}
 _DHCP_USAGE_CACHE = {"ts": 0.0, "bound": 0}
 _ROUTER_LOG_CACHE = {"ts": 0.0, "lines": []}
@@ -43,13 +44,14 @@ _LAST_RUNTIME_RESET_SEEN = 0.0
 
 def clear_runtime_state():
     """Reset cache/state in-memory task monitor."""
-    global _LAST_RUNTIME_RESET_SEEN
+    global _LAST_RUNTIME_RESET_SEEN, _API_HEAL_ATTEMPT_TS
     _LOCAL_IP_CACHE["ips"] = set()
     _LOCAL_IP_CACHE["ts"] = 0.0
     _API_HEALTH_CACHE["ts"] = 0.0
     _API_HEALTH_CACHE["healthy"] = True
     _API_HEALTH_CACHE["last_error"] = ""
     _API_PAUSE_LOG_TS.clear()
+    _API_HEAL_ATTEMPT_TS = 0.0
     _INTERFACES_CACHE["ts"] = 0.0
     _INTERFACES_CACHE["items"] = []
     _DHCP_USAGE_CACHE["ts"] = 0.0
@@ -117,6 +119,7 @@ def _normalize_ipv4(value):
 
 async def _get_api_health_cached(cache_ttl=5):
     """Cek health API RouterOS dengan cache singkat agar tidak memicu connect storm."""
+    global _API_HEAL_ATTEMPT_TS
     now = time.time()
     if (now - float(_API_HEALTH_CACHE.get("ts", 0.0))) < max(1, int(cache_ttl)):
         return bool(_API_HEALTH_CACHE.get("healthy", False)), str(_API_HEALTH_CACHE.get("last_error", ""))
@@ -128,6 +131,26 @@ async def _get_api_health_cached(cache_ttl=5):
         diag = {}
     healthy = bool(isinstance(diag, dict) and diag.get("healthy", False))
     last_error = str((diag or {}).get("last_error", "")).strip() if isinstance(diag, dict) else ""
+
+    backoff_seconds = 0.0
+    if isinstance(diag, dict):
+        try:
+            backoff_seconds = float(diag.get("backoff_seconds", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            backoff_seconds = 0.0
+
+    heal_cooldown = max(5, int(cache_ttl))
+    if (not healthy) and backoff_seconds <= 0.0 and (now - float(_API_HEAL_ATTEMPT_TS or 0.0)) >= heal_cooldown:
+        _API_HEAL_ATTEMPT_TS = now
+        try:
+            recovered = await asyncio.to_thread(_pool.health_check)
+        except Exception as e:
+            logger.debug("API self-heal attempt gagal: %s", e)
+            recovered = False
+        if recovered:
+            healthy = True
+            last_error = ""
+
     _API_HEALTH_CACHE["ts"] = now
     _API_HEALTH_CACHE["healthy"] = healthy
     _API_HEALTH_CACHE["last_error"] = last_error

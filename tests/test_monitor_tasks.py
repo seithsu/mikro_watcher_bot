@@ -277,7 +277,7 @@ class TestTaskApiHealthHelpers:
             t._API_HEALTH_CACHE["healthy"] = True
             t._API_HEALTH_CACHE["last_error"] = ""
 
-            time_values = iter([100.0, 100.5])
+            time_values = iter([100.0] * 12 + [100.5] * 12)
             monkeypatch.setattr(t.time, "time", lambda: next(time_values))
             diag_calls = {"count": 0}
 
@@ -286,6 +286,7 @@ class TestTaskApiHealthHelpers:
                 return {"healthy": False, "last_error": "auth failed"}
 
             monkeypatch.setattr(t._pool, "connection_diagnostics", fake_diag)
+            monkeypatch.setattr(t._pool, "health_check", lambda: False)
 
             first = await t._get_api_health_cached(cache_ttl=5)
             second = await t._get_api_health_cached(cache_ttl=5)
@@ -296,6 +297,35 @@ class TestTaskApiHealthHelpers:
         finally:
             t._API_HEALTH_CACHE.clear()
             t._API_HEALTH_CACHE.update(original_cache)
+
+    @pytest.mark.asyncio
+    async def test_get_api_health_cached_attempts_self_heal_when_backoff_cleared(self, monkeypatch):
+        import monitor.tasks as t
+
+        original_cache = dict(t._API_HEALTH_CACHE)
+        original_heal_ts = t._API_HEAL_ATTEMPT_TS
+        try:
+            t._API_HEALTH_CACHE["ts"] = 0.0
+            t._API_HEALTH_CACHE["healthy"] = False
+            t._API_HEALTH_CACHE["last_error"] = "stale-error"
+            t._API_HEAL_ATTEMPT_TS = 0.0
+
+            monkeypatch.setattr(t.time, "time", lambda: 100.0)
+            monkeypatch.setattr(
+                t._pool,
+                "connection_diagnostics",
+                lambda: {"healthy": False, "last_error": "socket fail", "backoff_seconds": 0.0},
+            )
+            monkeypatch.setattr(t._pool, "health_check", lambda: True)
+
+            healthy, last_error = await t._get_api_health_cached(cache_ttl=5)
+
+            assert healthy is True
+            assert last_error == ""
+        finally:
+            t._API_HEALTH_CACHE.clear()
+            t._API_HEALTH_CACHE.update(original_cache)
+            t._API_HEAL_ATTEMPT_TS = original_heal_ts
 
     @pytest.mark.asyncio
     async def test_pause_if_api_unavailable_logs_once_per_window(self, monkeypatch):
