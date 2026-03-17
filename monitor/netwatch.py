@@ -171,12 +171,43 @@ def _dns_label():
     return ", ".join(domains[:3])
 
 
+def _ignored_netwatch_hosts():
+    return {
+        str(host).strip()
+        for host in getattr(config, "NETWATCH_IGNORE_HOSTS", []) or []
+        if str(host).strip()
+    }
+
+
+def _host_fail_threshold(host):
+    overrides = getattr(config, "NETWATCH_FAIL_THRESHOLD_OVERRIDES", {}) or {}
+    try:
+        override = int(overrides.get(str(host).strip(), 0) or 0)
+    except (TypeError, ValueError):
+        override = 0
+    if override > 0:
+        return override
+    return int(getattr(config, "PING_FAIL_THRESHOLD", 3) or 3)
+
+
+def _filter_ignored_hosts(host_map):
+    ignored = _ignored_netwatch_hosts()
+    if not ignored or not isinstance(host_map, dict):
+        return dict(host_map or {})
+    return {
+        name: host
+        for name, host in (host_map or {}).items()
+        if str(host).strip() not in ignored
+    }
+
+
 def _alert_timestamp():
     return datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 
 def _static_monitored_hosts():
     """Host minimum yang tetap bisa ditampilkan saat API RouterOS tidak tersedia."""
+    ignored = _ignored_netwatch_hosts()
     hosts = [config.MIKROTIK_IP]
     if getattr(config, "GW_WAN", ""):
         hosts.append(config.GW_WAN)
@@ -190,7 +221,7 @@ def _static_monitored_hosts():
     seen = set()
     result = []
     for host in hosts:
-        if host and host not in seen:
+        if host and host not in seen and host not in ignored:
             seen.add(host)
             result.append(host)
     return result
@@ -261,18 +292,18 @@ async def _load_monitored_topology(refresh_ttl=180):
     if any(value is not None for value in (current_aps, current_servers, current_critical, current_gw_wan)):
         _topology_cache["ts"] = now_ts
         if isinstance(current_aps, dict):
-            _topology_cache["aps"] = dict(current_aps)
+            _topology_cache["aps"] = _filter_ignored_hosts(current_aps)
         if isinstance(current_servers, dict):
-            _topology_cache["servers"] = dict(current_servers)
+            _topology_cache["servers"] = _filter_ignored_hosts(current_servers)
         if isinstance(current_critical, dict):
-            _topology_cache["critical"] = dict(current_critical)
+            _topology_cache["critical"] = _filter_ignored_hosts(current_critical)
         if current_gw_wan:
             _topology_cache["gw_wan"] = str(current_gw_wan)
 
     return (
-        dict(_topology_cache.get("aps", {}) or {}),
-        dict(_topology_cache.get("servers", {}) or {}),
-        dict(_topology_cache.get("critical", {}) or {}),
+        _filter_ignored_hosts(_topology_cache.get("aps", {}) or {}),
+        _filter_ignored_hosts(_topology_cache.get("servers", {}) or {}),
+        _filter_ignored_hosts(_topology_cache.get("critical", {}) or {}),
         str(_topology_cache.get("gw_wan", "") or ""),
     )
 
@@ -644,7 +675,8 @@ async def task_monitor_netwatch():
                     _netwatch_fail[host] += 1
                     _netwatch_recovery[host] = 0  # Reset recovery counter on fail
                     _netwatch_up_since[host] = None
-                    if _netwatch_fail[host] == config.PING_FAIL_THRESHOLD and _netwatch_state[host]:
+                    fail_threshold = _host_fail_threshold(host)
+                    if _netwatch_fail[host] >= fail_threshold and _netwatch_state[host]:
                         _netwatch_state[host] = False
                         _netwatch_time_down[host] = datetime.datetime.now()
                         alerts_to_send.append(host)
@@ -686,11 +718,12 @@ async def task_monitor_netwatch():
                         if tup[1] == h: host_label = f"{tup[0]} ({tup[2]})"
                     for srv in config.TCP_SERVICES:
                         if f"{srv['ip']}:{srv['port']}" == h: host_label = f"TCP {srv['name']} ({srv['port']})"
+                    fail_threshold = _host_fail_threshold(h)
 
                     msg = (f"🚨 <b>DOWN — {host_label}</b>\n"
                            f"IP/Target: {h}\n"
                            f"Waktu: {waktu}\n"
-                           f"Gagal Ping: {config.PING_FAIL_THRESHOLD}x berturut-turut\n\n"
+                           f"Gagal Ping: {fail_threshold}x berturut-turut\n\n"
                            f"Klasifikasi Cepat: {host_kategori_short}\n\n"
                            f"[Snapshot]\n{snapshot}")
                     await kirim_ke_semua_admin(

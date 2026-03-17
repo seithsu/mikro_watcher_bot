@@ -85,6 +85,16 @@ class TestAlertTimestamp:
         assert len(ts) == 19
 
 
+def test_host_fail_threshold_prefers_override(monkeypatch):
+    import monitor.netwatch as nw
+
+    monkeypatch.setattr(nw.config, "PING_FAIL_THRESHOLD", 3, raising=False)
+    monkeypatch.setattr(nw.config, "NETWATCH_FAIL_THRESHOLD_OVERRIDES", {"192.168.3.145": 8}, raising=False)
+
+    assert nw._host_fail_threshold("192.168.3.145") == 8
+    assert nw._host_fail_threshold("192.168.3.10") == 3
+
+
 @pytest.mark.asyncio
 async def test_load_monitored_topology_reuses_last_good_cache(monkeypatch):
     import monitor.netwatch as nw
@@ -119,6 +129,67 @@ async def test_load_monitored_topology_reuses_last_good_cache(monkeypatch):
     finally:
         nw._topology_cache.clear()
         nw._topology_cache.update(orig_cache)
+
+
+@pytest.mark.asyncio
+async def test_load_monitored_topology_filters_ignored_hosts(monkeypatch):
+    import monitor.netwatch as nw
+
+    orig_cache = dict(nw._topology_cache)
+    monkeypatch.setattr(nw.config, "NETWATCH_IGNORE_HOSTS", ["192.168.3.145", "192.168.3.147"], raising=False)
+
+    async def fake_with_timeout(_coro, timeout=10, default=None, log_key=None, **kwargs):
+        if hasattr(_coro, "close"):
+            _coro.close()
+        if log_key == "netwatch:get_monitored_aps":
+            return {"AP1": "192.168.3.145", "AP2": "192.168.3.148"}
+        if log_key == "netwatch:get_monitored_servers":
+            return {"SIMRS": "192.168.3.10", "BOT": "192.168.3.147"}
+        if log_key == "netwatch:get_monitored_critical_devices":
+            return {"IGD": "192.168.3.90"}
+        if log_key == "netwatch:get_default_gateway":
+            return "192.168.1.1"
+        return None
+
+    try:
+        nw._topology_cache.update({
+            "ts": 0.0,
+            "aps": {},
+            "servers": {},
+            "critical": {},
+            "gw_wan": "",
+        })
+        monkeypatch.setattr(nw, "with_timeout", fake_with_timeout)
+
+        aps, servers, critical, gw = await nw._load_monitored_topology(refresh_ttl=0)
+
+        assert aps == {"AP2": "192.168.3.148"}
+        assert servers == {"SIMRS": "192.168.3.10"}
+        assert critical == {"IGD": "192.168.3.90"}
+        assert gw == "192.168.1.1"
+    finally:
+        nw._topology_cache.clear()
+        nw._topology_cache.update(orig_cache)
+
+
+def test_static_monitored_hosts_respects_ignore_list(monkeypatch):
+    import monitor.netwatch as nw
+
+    monkeypatch.setattr(nw.config, "NETWATCH_IGNORE_HOSTS", ["192.168.3.145", "192.168.3.147"], raising=False)
+    monkeypatch.setattr(nw.config, "MIKROTIK_IP", "192.168.3.1", raising=False)
+    monkeypatch.setattr(nw.config, "GW_WAN", "192.168.1.1", raising=False)
+    monkeypatch.setattr(nw.config, "GW_INET", "1.1.1.1", raising=False)
+    monkeypatch.setattr(nw.config, "SERVERS_FALLBACK", {"SIMRS": "192.168.3.10"}, raising=False)
+    monkeypatch.setattr(nw.config, "APS_FALLBACK", {"AP1": "192.168.3.145", "AP2": "192.168.3.148"}, raising=False)
+    monkeypatch.setattr(nw.config, "CRITICAL_DEVICES_FALLBACK", {"BOT": "192.168.3.147"}, raising=False)
+    monkeypatch.setattr(nw.config, "TCP_SERVICES", [], raising=False)
+
+    hosts = nw._static_monitored_hosts()
+
+    assert "192.168.3.145" not in hosts
+    assert "192.168.3.147" not in hosts
+    assert "192.168.3.148" in hosts
+    assert "192.168.3.10" in hosts
 
 
 class TestNetworkClassification:

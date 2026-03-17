@@ -95,6 +95,29 @@ MONITOR_IGNORE_IFACE = set(x.strip() for x in _ignore_raw.split(",") if x.strip(
 MONITOR_VPN_ENABLED = os.getenv("MONITOR_VPN_ENABLED", "True").strip().lower() in ['true', '1', 'yes']
 _vpn_ignore_raw = os.getenv("MONITOR_VPN_IGNORE_NAMES", "").strip()
 MONITOR_VPN_IGNORE_NAMES = set(x.strip().lower() for x in _vpn_ignore_raw.split(",") if x.strip())
+_netwatch_ignore_hosts_raw = os.getenv("NETWATCH_IGNORE_HOSTS", "").strip()
+NETWATCH_IGNORE_HOSTS = [x.strip() for x in _netwatch_ignore_hosts_raw.split(",") if x.strip()]
+
+
+def _parse_host_int_map(raw_value):
+    result = {}
+    for item in str(raw_value or "").split(","):
+        entry = item.strip()
+        if not entry or ":" not in entry:
+            continue
+        host, threshold = entry.rsplit(":", 1)
+        host = host.strip()
+        try:
+            threshold_value = int(str(threshold).strip())
+        except (TypeError, ValueError):
+            continue
+        if host and 1 <= threshold_value <= 100:
+            result[host] = threshold_value
+    return result
+
+
+_netwatch_fail_threshold_overrides_raw = os.getenv("NETWATCH_FAIL_THRESHOLD_OVERRIDES", "").strip()
+NETWATCH_FAIL_THRESHOLD_OVERRIDES = _parse_host_int_map(_netwatch_fail_threshold_overrides_raw)
 
 # Ambang batas indikator putus jaringan (Berapa kali ping gagal berturut-turut sebelum alert)
 PING_FAIL_THRESHOLD = int(os.getenv("PING_FAIL_THRESHOLD", "3").strip())
@@ -418,7 +441,8 @@ _RUNTIME_CONFIG_FILE = DATA_DIR / "runtime_config.json"
 _OVERRIDABLE_KEYS = {
     'CPU_THRESHOLD', 'RAM_THRESHOLD', 'DISK_THRESHOLD',
     'MONITOR_INTERVAL', 'NETWATCH_INTERVAL', 'MONITOR_LOG_INTERVAL', 'MONITOR_LOG_FETCH_LINES',
-    'NETWATCH_PING_CONCURRENCY', 'API_ACCOUNT_DEDUP_WINDOW_SEC',
+    'NETWATCH_PING_CONCURRENCY', 'API_ACCOUNT_DEDUP_WINDOW_SEC', 'NETWATCH_IGNORE_HOSTS',
+    'NETWATCH_FAIL_THRESHOLD_OVERRIDES',
     'PING_COUNT',
     'PING_FAIL_THRESHOLD', 'RECOVERY_CONFIRM_COUNT', 'RECOVERY_MIN_UP_SECONDS',
     'NETWATCH_CYCLE_TIMEOUT_THRESHOLD', 'NETWATCH_DEGRADED_ALERT_COOLDOWN_SEC',
@@ -444,6 +468,8 @@ _OVERRIDABLE_SCHEMA = {
     'DISK_THRESHOLD': (int, 10, 100),
     'MONITOR_INTERVAL': (int, 10, 86400),
     'NETWATCH_INTERVAL': (int, 5, 3600),
+    'NETWATCH_IGNORE_HOSTS': (str, None, None),
+    'NETWATCH_FAIL_THRESHOLD_OVERRIDES': (str, None, None),
     'MONITOR_LOG_INTERVAL': (int, 5, 3600),
     'MONITOR_LOG_FETCH_LINES': (int, 20, 1000),
     'NETWATCH_PING_CONCURRENCY': (int, 1, 32),
@@ -471,7 +497,7 @@ _OVERRIDABLE_SCHEMA = {
     'TOP_BW_ALERT_MIN_TX_MBPS': (int, 0, 1_000_000),
     'TOP_BW_ALERT_MIN_RX_MBPS': (int, 0, 1_000_000),
     'TOP_BW_ALERT_INTERVAL': (int, 5, 3600),
-    'TOP_BW_ALERT_IGNORE_QUEUES': (list, None, None),
+    'TOP_BW_ALERT_IGNORE_QUEUES': (str, None, None),
     'DAILY_REPORT_HOUR': (int, 0, 23),
     'ALERT_ESCALATION_MINUTES': (int, 1, 10_000),
     'ALERT_DIGEST_THRESHOLD': (int, 1, 10_000),
@@ -555,6 +581,10 @@ def reload_runtime_overrides(force=False, min_interval=5):
                 cast_val = _parse_runtime_bool(value)
             except ValueError:
                 continue
+        elif key in {'TOP_BW_ALERT_IGNORE_QUEUES', 'NETWATCH_IGNORE_HOSTS'}:
+            cast_val = [x.strip() for x in str(value or "").split(",") if x.strip()]
+        elif key == 'NETWATCH_FAIL_THRESHOLD_OVERRIDES':
+            cast_val = _parse_host_int_map(value)
         else:
             try:
                 cast_val = type_fn(value)
@@ -741,6 +771,10 @@ def reload_router_env(force=False, min_interval=5):
     MONITOR_VPN_ENABLED = _parse_bool(values.get("MONITOR_VPN_ENABLED"), MONITOR_VPN_ENABLED)
     _vpn_ignore_raw_val = str(values.get("MONITOR_VPN_IGNORE_NAMES", "") or "").strip()
     MONITOR_VPN_IGNORE_NAMES = set(x.strip().lower() for x in _vpn_ignore_raw_val.split(",") if x.strip())
+    _netwatch_ignore_hosts_raw_val = str(values.get("NETWATCH_IGNORE_HOSTS", "") or "").strip()
+    NETWATCH_IGNORE_HOSTS = [x.strip() for x in _netwatch_ignore_hosts_raw_val.split(",") if x.strip()]
+    _netwatch_fail_threshold_overrides_raw_val = str(values.get("NETWATCH_FAIL_THRESHOLD_OVERRIDES", "") or "").strip()
+    NETWATCH_FAIL_THRESHOLD_OVERRIDES = _parse_host_int_map(_netwatch_fail_threshold_overrides_raw_val)
     NETWATCH_INTERVAL = _parse_int_range(values.get("NETWATCH_INTERVAL"), NETWATCH_INTERVAL, 5, 3600)
     MONITOR_LOG_FETCH_LINES = _parse_int_range(
         values.get("MONITOR_LOG_FETCH_LINES"), MONITOR_LOG_FETCH_LINES, 20, 1000
