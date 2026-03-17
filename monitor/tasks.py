@@ -526,7 +526,7 @@ def _queue_rate_to_mbps(raw_rate):
         return 0.0
 
 
-def _build_top_bw_alert_message(host_name, rank, level, total_mbps, rx_mbps, tx_mbps, peak_mbps, peak_dir, hits):
+def _build_top_bw_alert_message(host_name, rank, level, total_mbps, rx_mbps, tx_mbps, peak_mbps, peak_dir, hits, threshold_hits):
     lvl = "CRITICAL" if level == "critical" else "WARNING"
     return (
         f"🚨 <b>[TOP BW {lvl}] {host_name} (#{rank})</b>\n\n"
@@ -534,7 +534,8 @@ def _build_top_bw_alert_message(host_name, rank, level, total_mbps, rx_mbps, tx_
         f"RX: {rx_mbps:.1f} Mbps | TX: {tx_mbps:.1f} Mbps\n"
         f"Total: {total_mbps:.1f} Mbps\n"
         f"Warn/Crit: {cfg.TOP_BW_ALERT_WARN_MBPS}/{cfg.TOP_BW_ALERT_CRIT_MBPS} Mbps\n"
-        f"Consecutive hits: {hits}x"
+        f"Observed hits: {hits}x\n"
+        f"Threshold hits: {threshold_hits}x"
     )
 
 
@@ -648,7 +649,8 @@ async def _run_top_bw_alert_engine(queue_list):
                 await kirim_ke_semua_admin(
                     _build_top_bw_alert_message(
                         name, c["rank"], "critical",
-                        c["total_mbps"], c["rx_mbps"], c["tx_mbps"], c["peak_mbps"], c["peak_dir"], state["crit_hits"]
+                        c["total_mbps"], c["rx_mbps"], c["tx_mbps"], c["peak_mbps"], c["peak_dir"],
+                        state["crit_hits"], consecutive_hits
                     ),
                     parse_mode='HTML',
                     severity=AlertSeverity.CRITICAL,
@@ -674,7 +676,8 @@ async def _run_top_bw_alert_engine(queue_list):
                 await kirim_ke_semua_admin(
                     _build_top_bw_alert_message(
                         name, c["rank"], "warning",
-                        c["total_mbps"], c["rx_mbps"], c["tx_mbps"], c["peak_mbps"], c["peak_dir"], state["warn_hits"]
+                        c["total_mbps"], c["rx_mbps"], c["tx_mbps"], c["peak_mbps"], c["peak_dir"],
+                        state["warn_hits"], consecutive_hits
                     ),
                     parse_mode='HTML',
                     severity=AlertSeverity.WARNING,

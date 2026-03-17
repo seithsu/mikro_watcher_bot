@@ -428,10 +428,12 @@ class TestTopBandwidthHelpers:
         assert t._classify_bw_level(25) == "warning"
         assert t._classify_bw_level(55) == "critical"
 
-        alert_text = t._build_top_bw_alert_message("PC-1", 1, "critical", 80, 50, 30, 50, "RX", 3)
+        alert_text = t._build_top_bw_alert_message("PC-1", 1, "critical", 80, 50, 30, 50, "RX", 3, 1)
         recovery_text = t._build_top_bw_recovery_message("PC-1")
         assert "TOP BW CRITICAL" in alert_text
         assert "Peak:" in alert_text and "(RX)" in alert_text
+        assert "Observed hits: 3x" in alert_text
+        assert "Threshold hits: 1x" in alert_text
         assert "PC-1" in recovery_text
 
     def test_queue_rate_to_mbps_converts_bytes_per_second(self):
