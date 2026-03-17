@@ -8,6 +8,7 @@ import logging
 import re
 import socket
 import ipaddress
+import random
 from collections import deque
 
 from telegram import InlineKeyboardMarkup, InlineKeyboardButton
@@ -34,11 +35,12 @@ _API_HEALTH_CACHE = {"ts": 0.0, "healthy": True, "last_error": ""}
 _API_PAUSE_LOG_TS = {}
 _API_HEAL_ATTEMPT_TS = 0.0
 _INTERFACES_CACHE = {"ts": 0.0, "items": []}
+_INTERFACE_TRAFFIC_CACHE = {"ts": 0.0, "items": {}}
 _DHCP_USAGE_CACHE = {"ts": 0.0, "bound": 0}
 _ROUTER_LOG_CACHE = {"ts": 0.0, "lines": []}
 _TRAFFIC_QUERY_MIN_CONCURRENCY = 1
 _TRAFFIC_QUERY_MAX_CONCURRENCY = 3
-_BACKGROUND_LOG_FETCH_CAP = 60
+_BACKGROUND_LOG_FETCH_HARD_CAP = 250
 _LAST_RUNTIME_RESET_SEEN = 0.0
 
 
@@ -54,6 +56,8 @@ def clear_runtime_state():
     _API_HEAL_ATTEMPT_TS = 0.0
     _INTERFACES_CACHE["ts"] = 0.0
     _INTERFACES_CACHE["items"] = []
+    _INTERFACE_TRAFFIC_CACHE["ts"] = 0.0
+    _INTERFACE_TRAFFIC_CACHE["items"] = {}
     _DHCP_USAGE_CACHE["ts"] = 0.0
     _DHCP_USAGE_CACHE["bound"] = 0
     _ROUTER_LOG_CACHE["ts"] = 0.0
@@ -209,9 +213,9 @@ async def _get_dhcp_usage_snapshot(cache_ttl=600):
 
 
 async def _get_router_logs_snapshot(fetch_lines, timeout=15, cache_ttl=180):
-    """Ambil tail log router dengan cap background dan fallback cache last-good."""
+    """Ambil tail log router dengan batas aman background dan fallback cache last-good."""
     requested = max(1, int(fetch_lines))
-    effective_lines = min(requested, _BACKGROUND_LOG_FETCH_CAP)
+    effective_lines = min(requested, _BACKGROUND_LOG_FETCH_HARD_CAP)
     logs = await with_timeout(
         asyncio.to_thread(get_mikrotik_log, effective_lines),
         timeout=timeout,
@@ -233,6 +237,19 @@ async def _get_router_logs_snapshot(fetch_lines, timeout=15, cache_ttl=180):
     return None
 
 
+def _compute_sleep_with_jitter(interval, jitter_ratio=0.15, max_jitter=2.0):
+    """Tambah jitter positif kecil agar loop periodik tidak selalu sinkron."""
+    base = max(0.0, float(interval or 0))
+    spread = min(float(max_jitter), base * float(jitter_ratio))
+    if spread <= 0:
+        return base
+    return base + random.uniform(0.0, spread)
+
+
+async def _sleep_with_jitter(interval, jitter_ratio=0.15, max_jitter=2.0):
+    await asyncio.sleep(_compute_sleep_with_jitter(interval, jitter_ratio=jitter_ratio, max_jitter=max_jitter))
+
+
 async def _pause_if_api_unavailable(task_name, interval, cache_ttl=5, log_every_sec=300):
     """Pause task non-netwatch saat API unavailable agar tidak spam error."""
     healthy, last_error = await _get_api_health_cached(cache_ttl=cache_ttl)
@@ -248,7 +265,7 @@ async def _pause_if_api_unavailable(task_name, interval, cache_ttl=5, log_every_
             last_error or "-",
         )
         _API_PAUSE_LOG_TS[task_name] = now
-    await asyncio.sleep(interval)
+    await _sleep_with_jitter(interval)
     return True
 
 
@@ -259,6 +276,38 @@ def _traffic_query_concurrency():
     except (TypeError, ValueError):
         limit = 2
     return max(_TRAFFIC_QUERY_MIN_CONCURRENCY, min(_TRAFFIC_QUERY_MAX_CONCURRENCY, limit or 2))
+
+
+def _remember_interface_traffic(active_ifaces, traffic_results):
+    """Simpan snapshot traffic terakhir agar task lain bisa reuse tanpa query ulang."""
+    snapshot = {}
+    for iface, traffic in zip(active_ifaces, traffic_results):
+        if isinstance(traffic, Exception) or not traffic:
+            continue
+        name = str(iface.get("name", "")).strip()
+        if not name:
+            continue
+        snapshot[name] = dict(traffic)
+    if snapshot:
+        _INTERFACE_TRAFFIC_CACHE["items"] = snapshot
+        _INTERFACE_TRAFFIC_CACHE["ts"] = time.time()
+
+
+def _get_recent_interface_traffic(active_ifaces, cache_ttl=75):
+    """Ambil snapshot traffic interface terakhir jika semua iface tersedia dan masih fresh."""
+    now = time.time()
+    if (now - float(_INTERFACE_TRAFFIC_CACHE.get("ts", 0.0))) > max(5, int(cache_ttl)):
+        return None
+
+    cached_items = _INTERFACE_TRAFFIC_CACHE.get("items", {}) or {}
+    results = []
+    for iface in active_ifaces:
+        name = str(iface.get("name", "")).strip()
+        traffic = cached_items.get(name)
+        if not traffic:
+            return None
+        results.append(dict(traffic))
+    return results
 
 
 async def _collect_interface_traffic(active_ifaces, log_prefix):
@@ -278,7 +327,9 @@ async def _collect_interface_traffic(active_ifaces, log_prefix):
             )
 
     tasks = [_fetch(iface) for iface in active_ifaces]
-    return await asyncio.gather(*tasks, return_exceptions=True)
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+    _remember_interface_traffic(active_ifaces, results)
+    return results
 
 
 def _extract_login_failure_ip(message_text):
@@ -472,7 +523,7 @@ async def task_monitor_system():
             )
             if info is None:
                 logger.warning("[ERR] get_status timed out")
-                await asyncio.sleep(interval)
+                await _sleep_with_jitter(interval)
                 continue
 
             await cek_cpu_ram(info)
@@ -491,7 +542,9 @@ async def task_monitor_system():
                     iface for iface in _cached_interfaces
                     if iface['name'] not in cfg.MONITOR_IGNORE_IFACE and iface['running']
                 ]
-                traffic_results = await _collect_interface_traffic(active_ifaces, "tasks:get_traffic")
+                traffic_results = _get_recent_interface_traffic(active_ifaces, cache_ttl=75)
+                if traffic_results is None:
+                    traffic_results = await _collect_interface_traffic(active_ifaces, "tasks:get_traffic")
 
                 for iface, traffic in zip(active_ifaces, traffic_results):
                     if isinstance(traffic, Exception) or not traffic:
@@ -523,7 +576,7 @@ async def task_monitor_system():
                 )
                 _last_error_alert_time = now
 
-        await asyncio.sleep(interval)
+        await _sleep_with_jitter(interval)
 
 
 # ============ PER-HOST TRAFFIC LEAK DETECTION ============
@@ -881,7 +934,7 @@ async def task_monitor_logs():
                     _api_skip_users.add(str(u).strip().lower())
             logs = await _get_router_logs_snapshot(fetch_lines, timeout=15, cache_ttl=300)
             if logs is None:
-                await asyncio.sleep(interval)
+                await _sleep_with_jitter(interval)
                 continue
 
             new_logs = []
@@ -1017,7 +1070,7 @@ async def task_monitor_logs():
         except Exception as e:
             logger.error(f"[ERR] Log Monitor: {e}")
 
-        await asyncio.sleep(interval)
+        await _sleep_with_jitter(interval)
 
 
 async def task_monitor_dhcp_arp():
@@ -1100,7 +1153,7 @@ async def task_monitor_dhcp_arp():
         except Exception as e:
             logger.error(f"[ERR] DHCP/ARP Monitor: {e}")
 
-        await asyncio.sleep(interval)
+        await _sleep_with_jitter(interval, max_jitter=1.0)
 
 
 # ============================================
@@ -1132,7 +1185,7 @@ async def task_monitor_traffic():
                 log_key="tasks:traffic:get_interfaces",
             )
             if not interfaces:
-                await asyncio.sleep(_TRAFFIC_INTERVAL)
+                await _sleep_with_jitter(_TRAFFIC_INTERVAL)
                 continue
 
             active_ifaces = [
@@ -1140,7 +1193,7 @@ async def task_monitor_traffic():
                 if iface['name'] not in cfg.MONITOR_IGNORE_IFACE and iface['running']
             ]
             if not active_ifaces:
-                await asyncio.sleep(_TRAFFIC_INTERVAL)
+                await _sleep_with_jitter(_TRAFFIC_INTERVAL)
                 continue
 
             traffic_results = await _collect_interface_traffic(active_ifaces, "tasks:traffic:get_traffic")
@@ -1162,7 +1215,7 @@ async def task_monitor_traffic():
         except Exception as e:
             logger.debug(f"[ERR] Traffic Monitor: {e}")
 
-        await asyncio.sleep(_TRAFFIC_INTERVAL)
+        await _sleep_with_jitter(_TRAFFIC_INTERVAL)
 
 
 async def task_monitor_top_bandwidth():
@@ -1187,7 +1240,7 @@ async def task_monitor_top_bandwidth():
         except Exception as e:
             logger.debug(f"[ERR] Top BW Monitor: {e}")
 
-        await asyncio.sleep(interval)
+        await _sleep_with_jitter(interval)
 
 
 async def task_monitor_alert_maintenance():
@@ -1202,5 +1255,5 @@ async def task_monitor_alert_maintenance():
             await send_digest()
         except Exception as e:
             logger.warning(f"Alert maintenance error: {e}")
-        await asyncio.sleep(interval)
+        await _sleep_with_jitter(interval)
 

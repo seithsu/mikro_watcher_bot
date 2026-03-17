@@ -14,6 +14,25 @@ from core.runtime_guard import install_global_exception_hooks
 
 logger = logging.getLogger(__name__)
 
+_TASK_STARTUP_DELAYS = {
+    "system": 0,
+    "alert_maintenance": 0,
+    "top_bw": 2,
+    "logs": 4,
+    "traffic": 6,
+    "netwatch": 8,
+    "dhcp_arp": 10,
+}
+
+
+async def _run_task_with_startup_delay(name, task_factory):
+    """Jalankan task dengan delay startup kecil agar burst koneksi tidak serentak."""
+    delay = max(0, int(_TASK_STARTUP_DELAYS.get(name, 0) or 0))
+    if delay:
+        logger.info("[INIT] Menunda start task %s selama %ss untuk meratakan beban startup.", name, delay)
+        await asyncio.sleep(delay)
+    await task_factory()
+
 
 async def main_async():
     """Main Loop Async dengan graceful shutdown."""
@@ -35,13 +54,13 @@ async def main_async():
     loop.set_exception_handler(_loop_exception_handler)
 
     tasks = [
-        asyncio.create_task(task_monitor_system()),
-        asyncio.create_task(task_monitor_traffic()),  # B10-RC1: dedicated traffic task (60s interval)
-        asyncio.create_task(task_monitor_top_bandwidth()),
-        asyncio.create_task(task_monitor_logs()),
-        asyncio.create_task(task_monitor_netwatch()),
-        asyncio.create_task(task_monitor_dhcp_arp()),
-        asyncio.create_task(task_monitor_alert_maintenance()),
+        asyncio.create_task(_run_task_with_startup_delay("system", task_monitor_system)),
+        asyncio.create_task(_run_task_with_startup_delay("traffic", task_monitor_traffic)),
+        asyncio.create_task(_run_task_with_startup_delay("top_bw", task_monitor_top_bandwidth)),
+        asyncio.create_task(_run_task_with_startup_delay("logs", task_monitor_logs)),
+        asyncio.create_task(_run_task_with_startup_delay("netwatch", task_monitor_netwatch)),
+        asyncio.create_task(_run_task_with_startup_delay("dhcp_arp", task_monitor_dhcp_arp)),
+        asyncio.create_task(_run_task_with_startup_delay("alert_maintenance", task_monitor_alert_maintenance)),
     ]
 
     def _signal_handler():

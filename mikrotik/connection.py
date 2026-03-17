@@ -56,6 +56,7 @@ class MikroTikConnection:
     _next_connect_allowed_ts = 0.0
     _last_connect_error = ""
     _last_limit_warning_ts = 0.0
+    _last_reset_all_ts = 0.0
 
     @classmethod
     def _connection_max_age_sec(cls):
@@ -261,12 +262,24 @@ class MikroTikConnection:
         versi berbeda dan reconnect secara otomatis.
         Thread saat ini juga langsung ditutup.
         """
+        now = time.time()
+        skipped = False
         with self._global_lock:
-            self._reset_version += 1
             self._prune_stale_counter()
-            if clear_backoff:
-                self._clear_connect_backoff()
+            reset_cooldown = max(5, int(getattr(cfg, "MIKROTIK_RESET_ALL_COOLDOWN_SEC", 15)))
+            if not clear_backoff and (now - float(self._last_reset_all_ts)) < reset_cooldown:
+                skipped = True
+            else:
+                self._reset_version += 1
+                self._last_reset_all_ts = now
+                if clear_backoff:
+                    self._clear_connect_backoff()
         self._close_local()
+        if skipped:
+            logger.info(
+                "librouteros: reset_all() ditahan cooldown; fallback ke reset lokal saja."
+            )
+            return
         logger.info(
             "librouteros: reset_all() versi ke-%s, semua thread akan reconnect (clear_backoff=%s).",
             self._reset_version,

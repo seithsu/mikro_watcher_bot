@@ -282,7 +282,8 @@ class TestConfigParsing:
             "POLI=07:00-17:00,INVALID,IGD=08:00-bad, =09:00-10:00"
         ) == {"POLI": (420, 1020)}
 
-    def test_critical_mac_parsing_and_guardrail(self, monkeypatch):
+    def test_critical_mac_parsing_and_guardrail(self, monkeypatch, tmp_path):
+        monkeypatch.chdir(tmp_path)
         monkeypatch.setenv("CRITICAL_MACS", "192.168.3.10=AA:BB:CC:DD:EE:FF,192.168.3.11:11:22:33")
         monkeypatch.setenv("TOP_BW_ALERT_WARN_MBPS", "90")
         monkeypatch.setenv("TOP_BW_ALERT_CRIT_MBPS", "40")

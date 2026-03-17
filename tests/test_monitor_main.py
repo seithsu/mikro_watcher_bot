@@ -22,12 +22,31 @@ async def test_main_async_runs_all_tasks_once(monkeypatch):
     monkeypatch.setattr(tasks, "task_monitor_dhcp_arp", _tick)
     monkeypatch.setattr(tasks, "task_monitor_alert_maintenance", _tick)
     monkeypatch.setattr(netwatch, "task_monitor_netwatch", _tick)
+    monkeypatch.setattr(mon, "_TASK_STARTUP_DELAYS", {k: 0 for k in mon._TASK_STARTUP_DELAYS})
 
     fake_signal_loop = SimpleNamespace(add_signal_handler=lambda *a, **k: None)
     monkeypatch.setattr(mon.asyncio, "get_event_loop", lambda: fake_signal_loop)
 
     await mon.main_async()
     assert called["count"] == 7
+
+
+@pytest.mark.asyncio
+async def test_run_task_with_startup_delay_waits_before_start(monkeypatch):
+    calls = []
+
+    async def _fake_sleep(delay):
+        calls.append(("sleep", delay))
+
+    async def _tick():
+        calls.append(("task", None))
+
+    monkeypatch.setattr(mon.asyncio, "sleep", _fake_sleep)
+    monkeypatch.setattr(mon, "_TASK_STARTUP_DELAYS", {"logs": 4})
+
+    await mon._run_task_with_startup_delay("logs", _tick)
+
+    assert calls == [("sleep", 4), ("task", None)]
 
 
 def test_main_initializes_and_runs_with_alert_gate(monkeypatch):

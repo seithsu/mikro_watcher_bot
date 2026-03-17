@@ -12,6 +12,7 @@ import os
 import socket
 import hashlib
 import math
+import random
 
 from mikrotik import (
     get_status, get_interfaces, get_dhcp_usage_count,
@@ -52,6 +53,23 @@ _topology_cache = {
     "critical": {},
     "gw_wan": "",
 }
+_snapshot_cache = {
+    "ts": 0.0,
+    "value": "",
+}
+
+
+def _compute_sleep_with_jitter(interval, jitter_ratio=0.15, max_jitter=2.0):
+    """Tambah jitter positif kecil agar siklus netwatch tidak selalu sinkron."""
+    base = max(0.0, float(interval or 0))
+    spread = min(float(max_jitter), base * float(jitter_ratio))
+    if spread <= 0:
+        return base
+    return base + random.uniform(0.0, spread)
+
+
+async def _sleep_with_jitter(interval, jitter_ratio=0.15, max_jitter=2.0):
+    await asyncio.sleep(_compute_sleep_with_jitter(interval, jitter_ratio=jitter_ratio, max_jitter=max_jitter))
 
 
 def clear_runtime_state():
@@ -73,6 +91,8 @@ def clear_runtime_state():
     _topology_cache["servers"] = {}
     _topology_cache["critical"] = {}
     _topology_cache["gw_wan"] = ""
+    _snapshot_cache["ts"] = 0.0
+    _snapshot_cache["value"] = ""
     _ping_semaphore = None
     _ping_semaphore_size = 0
 
@@ -396,7 +416,7 @@ async def _enter_api_unavailable_state(api_error):
     )
 
 
-def _generate_snapshot():
+def _build_snapshot_now():
     """Mengambil snapshot parameter kritikal saat down besar terjadi."""
     try:
         info = get_status()
@@ -423,6 +443,19 @@ def _generate_snapshot():
                 f"Err INDIBIZ: {inet_err} | Err LOCAL: {loc_err}")
     except Exception as e:
         return f"Snapshot gagal: {e}"
+
+
+def _generate_snapshot(cache_ttl=30):
+    """Ambil snapshot dengan cache singkat agar burst incident tidak query berat berulang."""
+    now = datetime.datetime.now().timestamp()
+    cached_value = str(_snapshot_cache.get("value", "") or "")
+    if cached_value and (now - float(_snapshot_cache.get("ts", 0.0))) < max(5, int(cache_ttl)):
+        return cached_value
+
+    snapshot = _build_snapshot_now()
+    _snapshot_cache["ts"] = now
+    _snapshot_cache["value"] = snapshot
+    return snapshot
 
 
 async def _cleanup_stale_hosts(all_hosts):
@@ -472,7 +505,7 @@ async def task_monitor_netwatch():
 
             if not api_healthy:
                 await _enter_api_unavailable_state(api_error or "health check gagal")
-                await asyncio.sleep(interval)
+                await _sleep_with_jitter(interval)
                 continue
 
             if _api_unavailable_active:
@@ -576,7 +609,7 @@ async def task_monitor_netwatch():
                         degraded_reason=degraded_reason,
                     )
                 )
-                await asyncio.sleep(interval)
+                await _sleep_with_jitter(interval)
                 continue
             else:
                 _netwatch_timeout_hits = 0
@@ -602,7 +635,7 @@ async def task_monitor_netwatch():
 
             if current_status.get(config.MIKROTIK_IP) is None:
                 await _enter_api_unavailable_state("RouterOS API ping command gagal: not logged in/session invalid")
-                await asyncio.sleep(interval)
+                await _sleep_with_jitter(interval)
                 continue
 
             # Setelah restart proses, incident DB bisa masih open walau host sudah UP.
@@ -764,4 +797,4 @@ async def task_monitor_netwatch():
         except Exception as e:
             logger.error(f"[ERR] Matrix Monitor: {e}")
 
-        await asyncio.sleep(interval)
+        await _sleep_with_jitter(interval)

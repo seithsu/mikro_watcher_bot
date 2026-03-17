@@ -95,6 +95,14 @@ def test_host_fail_threshold_prefers_override(monkeypatch):
     assert nw._host_fail_threshold("192.168.3.10") == 3
 
 
+def test_netwatch_compute_sleep_with_jitter_adds_positive_jitter(monkeypatch):
+    import monitor.netwatch as nw
+
+    monkeypatch.setattr(nw.random, "uniform", lambda a, b: 1.25)
+
+    assert nw._compute_sleep_with_jitter(10, jitter_ratio=0.2, max_jitter=3.0) == 11.25
+
+
 @pytest.mark.asyncio
 async def test_load_monitored_topology_reuses_last_good_cache(monkeypatch):
     import monitor.netwatch as nw
@@ -516,6 +524,8 @@ class TestNetwatchHelpers:
 
     def test_generate_snapshot_success_and_failure(self, monkeypatch):
         from monitor import netwatch as nw
+        nw._snapshot_cache["ts"] = 0.0
+        nw._snapshot_cache["value"] = ""
         monkeypatch.setattr(nw, "get_status", lambda: {"cpu": 10, "ram_total": 1024 * 1024 * 256, "ram_free": 1024 * 1024 * 200})
         monkeypatch.setattr(nw, "get_interfaces", lambda: [
             {"name": "ether1", "rx_error": 1, "tx_error": 2},
@@ -530,9 +540,23 @@ class TestNetwatchHelpers:
         assert "CPU:" in ok
         assert "DHCP:" in ok
 
+        nw._snapshot_cache["ts"] = 0.0
+        nw._snapshot_cache["value"] = ""
         monkeypatch.setattr(nw, "get_status", lambda: (_ for _ in ()).throw(Exception("boom")))
         fail = nw._generate_snapshot()
         assert "Snapshot gagal" in fail
+
+    def test_generate_snapshot_reuses_recent_cache(self, monkeypatch):
+        from monitor import netwatch as nw
+
+        nw._snapshot_cache["ts"] = 100.0
+        nw._snapshot_cache["value"] = "cached snapshot"
+        monkeypatch.setattr(nw.datetime, "datetime", type("FakeDt", (), {
+            "now": staticmethod(lambda: type("FakeNow", (), {"timestamp": lambda self: 110.0})())
+        }))
+        monkeypatch.setattr(nw, "_build_snapshot_now", lambda: (_ for _ in ()).throw(AssertionError("should use cache")))
+
+        assert nw._generate_snapshot(cache_ttl=30) == "cached snapshot"
 
     @pytest.mark.asyncio
     async def test_full_timeout_enters_degraded_without_marking_hosts_down(self, tmp_path, monkeypatch):

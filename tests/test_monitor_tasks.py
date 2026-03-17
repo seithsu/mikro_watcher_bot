@@ -79,6 +79,14 @@ class TestTaskMonitorLogs:
         logs = get_mikrotik_log()
         assert len(logs) == 1
 
+
+def test_compute_sleep_with_jitter_adds_positive_jitter(monkeypatch):
+    import monitor.tasks as t
+
+    monkeypatch.setattr(t.random, "uniform", lambda a, b: 1.5)
+
+    assert t._compute_sleep_with_jitter(10, jitter_ratio=0.2, max_jitter=3.0) == 11.5
+
     @pytest.mark.asyncio
     async def test_get_interfaces_snapshot_uses_last_good_cache(self, monkeypatch):
         import monitor.tasks as t
@@ -121,7 +129,7 @@ class TestTaskMonitorLogs:
             t._DHCP_USAGE_CACHE.update(original_cache)
 
     @pytest.mark.asyncio
-    async def test_get_router_logs_snapshot_caps_background_fetch_and_uses_cache(self, monkeypatch):
+    async def test_get_router_logs_snapshot_uses_requested_lines_and_uses_cache(self, monkeypatch):
         import monitor.tasks as t
 
         original_cache = dict(t._ROUTER_LOG_CACHE)
@@ -143,12 +151,40 @@ class TestTaskMonitorLogs:
             monkeypatch.setattr(t, "with_timeout", fake_with_timeout)
 
             logs = await t._get_router_logs_snapshot(120, timeout=15, cache_ttl=300)
-            assert captured["lines"] == 60
+            assert captured["lines"] == 120
             assert logs == [{"time": "10:00:01", "topics": "system,info", "message": "cached"}]
         finally:
             t._ROUTER_LOG_CACHE.clear()
             t._ROUTER_LOG_CACHE.update(original_cache)
         assert 'info' in logs[0]['topics']
+
+    @pytest.mark.asyncio
+    async def test_get_router_logs_snapshot_caps_background_fetch_at_hard_limit(self, monkeypatch):
+        import monitor.tasks as t
+
+        original_cache = dict(t._ROUTER_LOG_CACHE)
+        try:
+            captured = {}
+
+            def fake_get_log(lines):
+                captured["lines"] = lines
+                return []
+
+            async def fake_with_timeout(coro, timeout=15, default=None, **kwargs):
+                await coro
+                return None
+
+            t._ROUTER_LOG_CACHE["lines"] = [{"time": "10:00:01", "topics": "system,info", "message": "cached"}]
+            t._ROUTER_LOG_CACHE["ts"] = 100.0
+            monkeypatch.setattr(t.time, "time", lambda: 120.0)
+            monkeypatch.setattr(t, "get_mikrotik_log", fake_get_log)
+            monkeypatch.setattr(t, "with_timeout", fake_with_timeout)
+
+            await t._get_router_logs_snapshot(999, timeout=15, cache_ttl=300)
+            assert captured["lines"] == 250
+        finally:
+            t._ROUTER_LOG_CACHE.clear()
+            t._ROUTER_LOG_CACHE.update(original_cache)
 
     @pytest.mark.asyncio
     @patch('monitor.tasks.get_mikrotik_log', return_value=[
@@ -663,6 +699,8 @@ class TestMonitorTaskLoops:
         import monitor.tasks as t
 
         t._last_alerts.clear()
+        t._INTERFACE_TRAFFIC_CACHE["ts"] = 0.0
+        t._INTERFACE_TRAFFIC_CACHE["items"] = {}
         monkeypatch.setattr(t.cfg, "MONITOR_INTERVAL", 1, raising=False)
         monkeypatch.setattr(t.cfg, "reload_runtime_overrides", lambda min_interval=10: None, raising=False)
         monkeypatch.setattr(t.cfg, "reload_router_env", lambda min_interval=10: None, raising=False)
@@ -702,12 +740,62 @@ class TestMonitorTaskLoops:
         assert any("TRAFFIC ALERT" in call.args[0] for call in t.kirim_ke_semua_admin.await_args_list)
 
     @pytest.mark.asyncio
+    async def test_task_monitor_system_uses_recent_traffic_cache(self, monkeypatch):
+        import monitor.tasks as t
+
+        t._last_alerts.clear()
+        t._INTERFACE_TRAFFIC_CACHE["ts"] = 1000.0
+        t._INTERFACE_TRAFFIC_CACHE["items"] = {
+            "ether1": {"rx_bps": 60_000_000, "tx_bps": 10_000_000}
+        }
+        monkeypatch.setattr(t.cfg, "MONITOR_INTERVAL", 1, raising=False)
+        monkeypatch.setattr(t.cfg, "reload_runtime_overrides", lambda min_interval=10: None, raising=False)
+        monkeypatch.setattr(t.cfg, "reload_router_env", lambda min_interval=10: None, raising=False)
+        monkeypatch.setattr(t.cfg, "TRAFFIC_THRESHOLD_MBPS", 50, raising=False)
+        monkeypatch.setattr(t.cfg, "MONITOR_IGNORE_IFACE", [], raising=False)
+        monkeypatch.setattr(t, "_pause_if_api_unavailable", AsyncMock(return_value=False))
+        monkeypatch.setattr(t.database, "cleanup_old_data", MagicMock(return_value=0))
+        monkeypatch.setattr(t.database, "close_stale_incidents", MagicMock(return_value=0))
+        monkeypatch.setattr(t.database, "record_metrics_batch", MagicMock())
+        monkeypatch.setattr(t._pool, "health_check", lambda: True)
+        monkeypatch.setattr(t.time, "time", lambda: 1005.0)
+        monkeypatch.setattr(t, "get_status", lambda: {'cpu': '10', 'ram_total': '100', 'ram_free': '50', 'uptime': '1d', 'version': '7.14'})
+        monkeypatch.setattr(t, "get_interfaces", lambda: [{'name': 'ether1', 'running': True}])
+        monkeypatch.setattr(t, "_collect_interface_traffic", AsyncMock(side_effect=AssertionError("should use recent cache")))
+        monkeypatch.setattr(t, "cek_cpu_ram", AsyncMock())
+        monkeypatch.setattr(t, "cek_disk", AsyncMock())
+        monkeypatch.setattr(t, "cek_interface", AsyncMock())
+        monkeypatch.setattr(t, "cek_uptime_anomaly", AsyncMock())
+        monkeypatch.setattr(t, "cek_firmware", AsyncMock())
+        monkeypatch.setattr(t, "cek_vpn_tunnels", AsyncMock())
+        monkeypatch.setattr(t, "kirim_ke_semua_admin", AsyncMock())
+
+        async def fake_with_timeout(coro, timeout=10, default=None, **kwargs):
+            try:
+                return await coro if asyncio.iscoroutine(coro) else coro
+            except Exception:
+                return default
+
+        async def stop_sleep(_seconds):
+            raise asyncio.CancelledError()
+
+        monkeypatch.setattr(t, "with_timeout", fake_with_timeout)
+        monkeypatch.setattr(t.asyncio, "sleep", stop_sleep)
+
+        with pytest.raises(asyncio.CancelledError):
+            await t.task_monitor_system()
+
+        assert any("TRAFFIC ALERT" in call.args[0] for call in t.kirim_ke_semua_admin.await_args_list)
+
+    @pytest.mark.asyncio
     async def test_task_monitor_system_housekeeping_health_and_low_traffic_paths(self, monkeypatch):
         import monitor.tasks as t
         import mikrotik
 
         t._last_alerts.clear()
         t._last_alerts["traffic_ether1"] = True
+        t._INTERFACE_TRAFFIC_CACHE["ts"] = 0.0
+        t._INTERFACE_TRAFFIC_CACHE["items"] = {}
         monkeypatch.setattr(t.cfg, "MONITOR_INTERVAL", 1, raising=False)
         monkeypatch.setattr(t.cfg, "reload_runtime_overrides", lambda min_interval=10: None, raising=False)
         monkeypatch.setattr(t.cfg, "reload_router_env", lambda min_interval=10: None, raising=False)

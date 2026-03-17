@@ -19,6 +19,7 @@ def _fresh_conn():
     MikroTikConnection._next_connect_allowed_ts = 0.0
     MikroTikConnection._last_connect_error = ""
     MikroTikConnection._last_limit_warning_ts = 0.0
+    MikroTikConnection._last_reset_all_ts = 0.0
     conn = MikroTikConnection()
     conn._local = SimpleNamespace()
     return conn
@@ -269,6 +270,17 @@ class TestConnectionReset:
         assert type(conn)._connect_fail_count == 0
         assert type(conn)._next_connect_allowed_ts == 0.0
         assert type(conn)._last_connect_error == ""
+
+    @patch('mikrotik.connection.librouteros')
+    def test_reset_all_respects_cooldown_and_falls_back_to_local_reset(self, _mock_lib):
+        conn = _fresh_conn()
+        type(conn)._last_reset_all_ts = 100.0
+
+        with patch('mikrotik.connection.time.time', return_value=105.0):
+            conn.reset_all()
+
+        assert type(conn)._reset_version == 0
+        assert type(conn)._last_reset_all_ts == 100.0
 
 
 class TestConnectionHelpers:
