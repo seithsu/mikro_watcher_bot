@@ -290,6 +290,31 @@ def _extract_login_failure_ip(message_text):
     return _normalize_ipv4(match.group(1))
 
 
+def _is_queue_change_log(topics, message_text):
+    """Deteksi log perubahan queue yang layak diforward walau topic hanya info."""
+    msg = str(message_text or "").lower()
+    if "queue" not in msg:
+        return False
+
+    action_tokens = (
+        "added",
+        "removed",
+        "deleted",
+        "changed",
+        "updated",
+        "edited",
+        "disabled",
+        "enabled",
+        "moved",
+        "set ",
+    )
+    if not any(token in msg for token in action_tokens):
+        return False
+
+    topics_l = str(topics or "").lower()
+    return any(token in topics_l for token in ("system", "account", "info"))
+
+
 def _get_autoblock_trusted_ips():
     """Set IP trusted yang tidak boleh pernah di-auto-block."""
     trusted = {"127.0.0.1", "0.0.0.0"}
@@ -953,9 +978,10 @@ async def task_monitor_logs():
 
                     # Deteksi event power/UPS/voltage
                     is_power_event = any(kw in msg for kw in ['power', 'voltage', 'ups', 'poe'])
+                    is_queue_change = _is_queue_change_log(topics, msg_text)
 
                     # Filter topik penting untuk alert log standar
-                    if topic_tokens.intersection({'error', 'critical', 'warning', 'account'}):
+                    if topic_tokens.intersection({'error', 'critical', 'warning', 'account'}) or is_queue_change:
                         if not is_bot_ip:
                             new_logs.append(l)
                             if is_power_event:
