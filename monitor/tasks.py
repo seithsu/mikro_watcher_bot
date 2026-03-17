@@ -507,13 +507,13 @@ _alerted_hosts_traffic = set()  # Tracking host yang sudah di-alert traffic leak
 _top_bw_host_state = {}         # host -> state dict (engine top bandwidth baru)
 
 
-def _classify_bw_level(total_mbps):
-    """Klasifikasi level bandwidth berdasarkan threshold warning/critical."""
+def _classify_bw_level(peak_mbps):
+    """Klasifikasi level bandwidth berdasarkan peak sisi RX/TX, bukan total gabungan."""
     warn = float(cfg.TOP_BW_ALERT_WARN_MBPS)
     crit = float(max(cfg.TOP_BW_ALERT_CRIT_MBPS, cfg.TOP_BW_ALERT_WARN_MBPS))
-    if total_mbps >= crit:
+    if peak_mbps >= crit:
         return "critical"
-    if total_mbps >= warn:
+    if peak_mbps >= warn:
         return "warning"
     return None
 
@@ -526,12 +526,13 @@ def _queue_rate_to_mbps(raw_rate):
         return 0.0
 
 
-def _build_top_bw_alert_message(host_name, rank, level, total_mbps, rx_mbps, tx_mbps, hits):
+def _build_top_bw_alert_message(host_name, rank, level, total_mbps, rx_mbps, tx_mbps, peak_mbps, peak_dir, hits):
     lvl = "CRITICAL" if level == "critical" else "WARNING"
     return (
         f"🚨 <b>[TOP BW {lvl}] {host_name} (#{rank})</b>\n\n"
-        f"Total: <b>{total_mbps:.1f} Mbps</b>\n"
+        f"Peak: <b>{peak_mbps:.1f} Mbps</b> ({peak_dir})\n"
         f"RX: {rx_mbps:.1f} Mbps | TX: {tx_mbps:.1f} Mbps\n"
+        f"Total: {total_mbps:.1f} Mbps\n"
         f"Warn/Crit: {cfg.TOP_BW_ALERT_WARN_MBPS}/{cfg.TOP_BW_ALERT_CRIT_MBPS} Mbps\n"
         f"Consecutive hits: {hits}x"
     )
@@ -587,6 +588,8 @@ def _normalize_top_bw_candidates(queue_list):
         rx_mbps = _queue_rate_to_mbps(rx_bps)
         tx_mbps = _queue_rate_to_mbps(tx_bps)
         total_mbps = _queue_rate_to_mbps(total_bps)
+        peak_mbps = max(rx_mbps, tx_mbps)
+        peak_dir = "RX" if rx_mbps >= tx_mbps else "TX"
         # Filter asimetris/noise: minimal salah satu sisi melewati ambang min.
         if rx_mbps < cfg.TOP_BW_ALERT_MIN_RX_MBPS and tx_mbps < cfg.TOP_BW_ALERT_MIN_TX_MBPS:
             continue
@@ -596,9 +599,11 @@ def _normalize_top_bw_candidates(queue_list):
             "rx_mbps": rx_mbps,
             "tx_mbps": tx_mbps,
             "total_mbps": total_mbps,
+            "peak_mbps": peak_mbps,
+            "peak_dir": peak_dir,
         })
 
-    candidates.sort(key=lambda x: x["total_mbps"], reverse=True)
+    candidates.sort(key=lambda x: (x["peak_mbps"], x["total_mbps"]), reverse=True)
     for idx, c in enumerate(candidates, start=1):
         c["rank"] = idx
     return candidates
@@ -628,7 +633,7 @@ async def _run_top_bw_alert_engine(queue_list):
         })
         state["last_seen_ts"] = now
 
-        level = _classify_bw_level(c["total_mbps"])
+        level = _classify_bw_level(c["peak_mbps"])
         if level == "critical":
             state["warn_hits"] += 1
             state["crit_hits"] += 1
@@ -643,7 +648,7 @@ async def _run_top_bw_alert_engine(queue_list):
                 await kirim_ke_semua_admin(
                     _build_top_bw_alert_message(
                         name, c["rank"], "critical",
-                        c["total_mbps"], c["rx_mbps"], c["tx_mbps"], state["crit_hits"]
+                        c["total_mbps"], c["rx_mbps"], c["tx_mbps"], c["peak_mbps"], c["peak_dir"], state["crit_hits"]
                     ),
                     parse_mode='HTML',
                     severity=AlertSeverity.CRITICAL,
@@ -669,7 +674,7 @@ async def _run_top_bw_alert_engine(queue_list):
                 await kirim_ke_semua_admin(
                     _build_top_bw_alert_message(
                         name, c["rank"], "warning",
-                        c["total_mbps"], c["rx_mbps"], c["tx_mbps"], state["warn_hits"]
+                        c["total_mbps"], c["rx_mbps"], c["tx_mbps"], c["peak_mbps"], c["peak_dir"], state["warn_hits"]
                     ),
                     parse_mode='HTML',
                     severity=AlertSeverity.WARNING,
@@ -738,23 +743,27 @@ async def _cek_per_host_traffic(queue_list):
         rx_rate = q.get('rx_rate', 0)
         tx_rate = q.get('tx_rate', 0)
         total_rate = rx_rate + tx_rate
+        peak_rate = max(rx_rate, tx_rate)
+        peak_dir = "RX" if rx_rate >= tx_rate else "TX"
 
-        if total_rate >= threshold_bps:
+        if peak_rate >= threshold_bps:
             if name not in _alerted_hosts_traffic:
                 rx_mb = _queue_rate_to_mbps(rx_rate)
                 tx_mb = _queue_rate_to_mbps(tx_rate)
                 total_mb = _queue_rate_to_mbps(total_rate)
+                peak_mb = _queue_rate_to_mbps(peak_rate)
                 await kirim_ke_semua_admin(
                     f"🚨 <b>[TRAFFIC LEAK] {name}</b>\n\n"
-                    f"Total: <b>{total_mb:.1f} Mbps</b> (threshold: {cfg.TRAFFIC_LEAK_THRESHOLD_MBPS} Mbps)\n"
+                    f"Peak: <b>{peak_mb:.1f} Mbps</b> ({peak_dir}) (threshold: {cfg.TRAFFIC_LEAK_THRESHOLD_MBPS} Mbps)\n"
                     f"RX: {rx_mb:.1f} Mbps\n"
                     f"TX: {tx_mb:.1f} Mbps\n\n"
+                    f"Total: {total_mb:.1f} Mbps\n"
                     f"Kemungkinan: aktivitas tidak wajar, download massal, atau kerentanan jaringan.",
                     parse_mode='HTML',
                     severity=AlertSeverity.WARNING,
                 )
                 _alerted_hosts_traffic.add(name)
-                logger.warning(f"[TRAFFIC LEAK] {name}: {total_mb:.1f} Mbps")
+                logger.warning(f"[TRAFFIC LEAK] {name}: peak={peak_mb:.1f} Mbps ({peak_dir}), total={total_mb:.1f} Mbps")
         else:
             _alerted_hosts_traffic.discard(name)
 

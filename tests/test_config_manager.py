@@ -27,11 +27,12 @@ class TestConfigManager:
         config_file = tmp_path / 'runtime_config.json'
         monkeypatch.setattr(config_manager, '_CONFIG_FILE', config_file)
         
-        with patch('core.database.audit_log', MagicMock()):
+        with patch('core.database.audit_log', MagicMock()), patch('core.runtime_reset_signal.emit_runtime_reset_signal', MagicMock()) as signal_mock:
             success, msg = config_manager.set_config('CPU_THRESHOLD', '90', 12345, 'testuser')
         
         assert success is True
         assert '90' in msg
+        signal_mock.assert_called_once()
         
         # Verify persisted
         with open(config_file) as f:
@@ -74,10 +75,11 @@ class TestConfigManager:
         with open(config_file, 'w') as f:
             json.dump({'CPU_THRESHOLD': 95}, f)
         
-        with patch('core.database.audit_log', MagicMock()):
+        with patch('core.database.audit_log', MagicMock()), patch('core.runtime_reset_signal.emit_runtime_reset_signal', MagicMock()) as signal_mock:
             success, msg = config_manager.reset_config('CPU_THRESHOLD', 12345, 'testuser')
         
         assert success is True
+        signal_mock.assert_called_once()
         
         # Verify removed from file
         with open(config_file) as f:

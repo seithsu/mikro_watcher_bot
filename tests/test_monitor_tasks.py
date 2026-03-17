@@ -428,9 +428,10 @@ class TestTopBandwidthHelpers:
         assert t._classify_bw_level(25) == "warning"
         assert t._classify_bw_level(55) == "critical"
 
-        alert_text = t._build_top_bw_alert_message("PC-1", 1, "critical", 80, 50, 30, 3)
+        alert_text = t._build_top_bw_alert_message("PC-1", 1, "critical", 80, 50, 30, 50, "RX", 3)
         recovery_text = t._build_top_bw_recovery_message("PC-1")
         assert "TOP BW CRITICAL" in alert_text
+        assert "Peak:" in alert_text and "(RX)" in alert_text
         assert "PC-1" in recovery_text
 
     def test_queue_rate_to_mbps_converts_bytes_per_second(self):
@@ -460,6 +461,7 @@ class TestTopBandwidthHelpers:
         assert [item["name"] for item in result] == ["PC-1", "PC-2"]
         assert result[0]["rank"] == 1
         assert result[1]["rank"] == 2
+        assert result[0]["peak_mbps"] >= result[1]["peak_mbps"]
 
     @pytest.mark.asyncio
     @patch("monitor.tasks.kirim_ke_semua_admin", new_callable=AsyncMock)
@@ -515,16 +517,17 @@ class TestTopBandwidthHelpers:
         time_values = iter([1000.0, 1001.0, 1065.0, 1066.0, 1067.0, 1068.0])
         monkeypatch.setattr(t.time, "time", lambda: next(time_values))
 
-        await t._run_top_bw_alert_engine([{"name": "PC-1", "rx_rate": 25_000_000, "tx_rate": 0}])
-        await t._run_top_bw_alert_engine([{"name": "PC-1", "rx_rate": 25_000_000, "tx_rate": 0}])
-        await t._run_top_bw_alert_engine([{"name": "PC-1", "rx_rate": 25_000_000, "tx_rate": 0}])
-        await t._run_top_bw_alert_engine([{"name": "PC-1", "rx_rate": 60_000_000, "tx_rate": 0}])
-        await t._run_top_bw_alert_engine([{"name": "PC-1", "rx_rate": 60_000_000, "tx_rate": 0}])
-        await t._run_top_bw_alert_engine([{"name": "PC-1", "rx_rate": 5_000_000, "tx_rate": 0}])
+        await t._run_top_bw_alert_engine([{"name": "PC-1", "rx_rate": 3_125_000, "tx_rate": 0}])   # 25 Mbps
+        await t._run_top_bw_alert_engine([{"name": "PC-1", "rx_rate": 3_125_000, "tx_rate": 0}])   # 25 Mbps
+        await t._run_top_bw_alert_engine([{"name": "PC-1", "rx_rate": 3_125_000, "tx_rate": 0}])   # 25 Mbps
+        await t._run_top_bw_alert_engine([{"name": "PC-1", "rx_rate": 6_875_000, "tx_rate": 0}])   # 55 Mbps
+        await t._run_top_bw_alert_engine([{"name": "PC-1", "rx_rate": 6_875_000, "tx_rate": 0}])   # 55 Mbps
+        await t._run_top_bw_alert_engine([{"name": "PC-1", "rx_rate": 625_000, "tx_rate": 0}])     # 5 Mbps
 
         sent_messages = [call.args[0] for call in mock_send.await_args_list]
         assert any("TOP BW WARNING" in msg for msg in sent_messages)
         assert any("TOP BW CRITICAL" in msg for msg in sent_messages)
+        assert any("Peak:" in msg for msg in sent_messages)
 
     @pytest.mark.asyncio
     @patch("monitor.tasks.kirim_ke_semua_admin", new_callable=AsyncMock)
@@ -544,6 +547,20 @@ class TestTopBandwidthHelpers:
         assert mock_send.await_count == 1
         assert "PC-A" not in t._alerted_hosts_traffic
         warn_log.assert_called_once()
+
+    @pytest.mark.asyncio
+    @patch("monitor.tasks.kirim_ke_semua_admin", new_callable=AsyncMock)
+    async def test_legacy_traffic_leak_uses_peak_not_total(self, mock_send, monkeypatch):
+        import monitor.tasks as t
+
+        t._alerted_hosts_traffic.clear()
+        monkeypatch.setattr(t.cfg, "TOP_BW_ALERT_ENABLED", False, raising=False)
+        monkeypatch.setattr(t.cfg, "TRAFFIC_LEAK_THRESHOLD_MBPS", 25, raising=False)
+        monkeypatch.setattr(t.cfg, "TRAFFIC_LEAK_WHITELIST", [], raising=False)
+
+        await t._cek_per_host_traffic([{"name": "PC-B", "rx_rate": 2_500_000, "tx_rate": 1_250_000}])  # 20/10 Mbps
+
+        assert mock_send.await_count == 0
 
     @pytest.mark.asyncio
     @patch("monitor.tasks.kirim_ke_semua_admin", new_callable=AsyncMock)

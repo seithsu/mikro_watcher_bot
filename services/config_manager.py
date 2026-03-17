@@ -344,6 +344,12 @@ def set_config(key, value, admin_id=None, username=None):
         setattr(cfg, key, [x.strip() for x in str(typed_value).split(',') if x.strip()])
     else:
         setattr(cfg, key, typed_value)
+
+    try:
+        from core.runtime_reset_signal import emit_runtime_reset_signal
+        emit_runtime_reset_signal(reason=f"config:set:{key}", clear_runtime_config=False)
+    except Exception as e:
+        logger.debug("Suppressed non-fatal exception: %s", e)
     
     # Audit log
     try:
@@ -380,6 +386,12 @@ def reset_config(key, admin_id=None, username=None):
     # Apply the true default back to the running config module
     if default_value is not None:
         setattr(_cfg_module, key, default_value)
+
+    try:
+        from core.runtime_reset_signal import emit_runtime_reset_signal
+        emit_runtime_reset_signal(reason=f"config:reset:{key}", clear_runtime_config=False)
+    except Exception as e:
+        logger.debug("Suppressed non-fatal exception: %s", e)
     
     try:
         from core import database
