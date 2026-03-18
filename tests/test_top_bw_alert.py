@@ -27,7 +27,7 @@ class TestTopBandwidthAlertEngine:
         monkeypatch.setattr(t.cfg, "TOP_BW_ALERT_MIN_RX_MBPS", 0)
         monkeypatch.setattr(t.cfg, "TRAFFIC_LEAK_WHITELIST", [])
 
-        data = [{"name": "PC-1", "rx_rate": 7_500_000, "tx_rate": 625_000}]
+        data = [{"name": "PC-1", "rx_rate": 60_000_000, "tx_rate": 5_000_000}]
         await t._cek_per_host_traffic(data)
         await t._cek_per_host_traffic(data)
 
@@ -50,8 +50,8 @@ class TestTopBandwidthAlertEngine:
         monkeypatch.setattr(t.cfg, "TOP_BW_ALERT_MIN_RX_MBPS", 0)
         monkeypatch.setattr(t.cfg, "TRAFFIC_LEAK_WHITELIST", [])
 
-        warning_data = [{"name": "PC-2", "rx_rate": 6_875_000, "tx_rate": 0}]
-        critical_data = [{"name": "PC-2", "rx_rate": 15_000_000, "tx_rate": 0}]
+        warning_data = [{"name": "PC-2", "rx_rate": 55_000_000, "tx_rate": 0}]
+        critical_data = [{"name": "PC-2", "rx_rate": 120_000_000, "tx_rate": 0}]
 
         await t._cek_per_host_traffic(warning_data)
         await t._cek_per_host_traffic(critical_data)
@@ -75,7 +75,7 @@ class TestTopBandwidthAlertEngine:
         monkeypatch.setattr(t.cfg, "TOP_BW_ALERT_MIN_RX_MBPS", 0)
         monkeypatch.setattr(t.cfg, "TRAFFIC_LEAK_WHITELIST", [])
 
-        data = [{"name": "PC-3", "rx_rate": 8_750_000, "tx_rate": 0}]
+        data = [{"name": "PC-3", "rx_rate": 70_000_000, "tx_rate": 0}]
         await t._cek_per_host_traffic(data)
         await t._cek_per_host_traffic(data)
 
@@ -97,7 +97,7 @@ class TestTopBandwidthAlertEngine:
         monkeypatch.setattr(t.cfg, "TOP_BW_ALERT_MIN_RX_MBPS", 0)
         monkeypatch.setattr(t.cfg, "TRAFFIC_LEAK_WHITELIST", [])
 
-        high = [{"name": "PC-4", "rx_rate": 8_750_000, "tx_rate": 0}]
+        high = [{"name": "PC-4", "rx_rate": 70_000_000, "tx_rate": 0}]
         await t._cek_per_host_traffic(high)
         await t._cek_per_host_traffic([])
         await t._cek_per_host_traffic([])
@@ -122,8 +122,8 @@ class TestTopBandwidthAlertEngine:
         monkeypatch.setattr(t.cfg, "TRAFFIC_LEAK_WHITELIST", [])
 
         data = [
-            {"name": "PC-5A", "rx_rate": 15_000_000, "tx_rate": 0},
-            {"name": "PC-5B", "rx_rate": 13_750_000, "tx_rate": 0},
+            {"name": "PC-5A", "rx_rate": 120_000_000, "tx_rate": 0},
+            {"name": "PC-5B", "rx_rate": 110_000_000, "tx_rate": 0},
         ]
         await t._cek_per_host_traffic(data)
 
@@ -140,7 +140,7 @@ class TestTopBandwidthAlertEngine:
         monkeypatch.setattr(t.cfg, "TRAFFIC_LEAK_THRESHOLD_MBPS", 50)
         monkeypatch.setattr(t.cfg, "TRAFFIC_LEAK_WHITELIST", [])
 
-        data = [{"name": "PC-LEGACY", "rx_rate": 7_500_000, "tx_rate": 0}]
+        data = [{"name": "PC-LEGACY", "rx_rate": 60_000_000, "tx_rate": 0}]
         await t._cek_per_host_traffic(data)
 
         assert mock_send.call_count == 1

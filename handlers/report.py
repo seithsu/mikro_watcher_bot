@@ -10,8 +10,9 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 
 from core.logger import catat
-from .utils import _check_access, get_back_button, append_back_button, format_bytes_auto, escape_html, with_menu_timestamp
+from .utils import _check_access, get_back_button, append_back_button, escape_html, with_menu_timestamp
 from mikrotik import get_top_queues, get_simple_queues, get_traffic, get_interfaces
+from mikrotik.queue import format_rate_bps
 from core import database
 
 logger = logging.getLogger(__name__)
@@ -238,7 +239,7 @@ async def cmd_bandwidth(update: Update, context: ContextTypes.DEFAULT_TYPE):
             total_tx += q['tx_rate']
         
         pesan += f"{'━' * 25}\n"
-        pesan += f"📶 Total aktif: ↓ {format_bytes_auto(total_rx)}ps | ↑ {format_bytes_auto(total_tx)}ps"
+        pesan += f"📶 Total aktif: ↓ {format_rate_bps(total_rx)} | ↑ {format_rate_bps(total_tx)}"
         pesan = with_menu_timestamp(pesan)
         
         keyboard = [
@@ -261,7 +262,6 @@ async def cmd_bandwidth(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.callback_query.message.edit_text(pesan, parse_mode='HTML', reply_markup=get_back_button())
         else:
             await update.effective_message.reply_text(pesan, parse_mode='HTML', reply_markup=get_back_button())
-
 
 
 

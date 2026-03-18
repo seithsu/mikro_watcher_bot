@@ -51,15 +51,27 @@ class TestCmdBandwidth:
         from handlers.report import cmd_bandwidth
 
         mock_top.return_value = [
-            {'.id': '*1', 'name': 'limit-PC01', 'target': '192.168.1.10/32',
-             'rate': '5242880/2621440', 'bytes': '1073741824/536870912',
-             'max-limit': '10M/5M'},
+            {
+                '.id': '*1',
+                'name': 'limit-PC01',
+                'target': '192.168.1.10/32',
+                'rx_rate': 5_000_000,
+                'tx_rate': 10_000_000,
+                'total_rate': 15_000_000,
+                'rx_rate_fmt': '5.00 Mbps',
+                'tx_rate_fmt': '10.0 Mbps',
+                'total_rate_fmt': '15.0 Mbps',
+            },
         ]
 
         update = _make_update()
         context = MagicMock()
         await cmd_bandwidth(update, context)
         update.effective_message.reply_text.assert_called()
+        sent_text = update.effective_message.reply_text.call_args[0][0]
+        assert '5.00 Mbps' in sent_text
+        assert '10.0 Mbps' in sent_text
+        assert '15.0 Mbps' in sent_text
 
     @pytest.mark.asyncio
     @patch('handlers.report.catat')

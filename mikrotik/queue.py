@@ -5,9 +5,31 @@
 import logging
 
 from .connection import pool
-from .decorators import with_retry, cached, to_int, format_bytes
+from .decorators import with_retry, cached
 
 logger = logging.getLogger(__name__)
+
+
+def format_rate_bps(rate_bps):
+    """Format bit-per-second ke satuan yang mudah dibaca."""
+    try:
+        value = float(rate_bps or 0)
+    except (TypeError, ValueError):
+        value = 0.0
+
+    units = ("bps", "Kbps", "Mbps", "Gbps", "Tbps")
+    unit_idx = 0
+    while value >= 1000 and unit_idx < len(units) - 1:
+        value /= 1000.0
+        unit_idx += 1
+
+    if unit_idx == 0:
+        return f"{int(value)} {units[unit_idx]}"
+    if value >= 100:
+        return f"{value:.0f} {units[unit_idx]}"
+    if value >= 10:
+        return f"{value:.1f} {units[unit_idx]}"
+    return f"{value:.2f} {units[unit_idx]}"
 
 
 @cached(ttl=5)
@@ -66,9 +88,9 @@ def get_top_queues(limit=10):
             'rx_rate': rx_rate,
             'tx_rate': tx_rate,
             'total_rate': total_rate,
-            'rx_rate_fmt': format_bytes(rx_rate) + 'ps',
-            'tx_rate_fmt': format_bytes(tx_rate) + 'ps',
-            'total_rate_fmt': format_bytes(total_rate) + 'ps',
+            'rx_rate_fmt': format_rate_bps(rx_rate),
+            'tx_rate_fmt': format_rate_bps(tx_rate),
+            'total_rate_fmt': format_rate_bps(total_rate),
         })
 
     results.sort(key=lambda x: x['total_rate'], reverse=True)

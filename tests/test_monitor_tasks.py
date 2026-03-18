@@ -490,11 +490,11 @@ class TestTopBandwidthHelpers:
         assert "Threshold hits: 1x" in alert_text
         assert "PC-1" in recovery_text
 
-    def test_queue_rate_to_mbps_converts_bytes_per_second(self):
+    def test_queue_rate_to_mbps_converts_bits_per_second(self):
         import monitor.tasks as t
 
         assert t._queue_rate_to_mbps(0) == 0.0
-        assert round(t._queue_rate_to_mbps(4_712_500), 1) == 37.7
+        assert round(t._queue_rate_to_mbps(40_300_000), 1) == 40.3
 
     def test_normalize_top_bw_candidates_filters_and_sorts(self, monkeypatch):
         import monitor.tasks as t
@@ -573,12 +573,12 @@ class TestTopBandwidthHelpers:
         time_values = iter([1000.0, 1001.0, 1065.0, 1066.0, 1067.0, 1068.0])
         monkeypatch.setattr(t.time, "time", lambda: next(time_values))
 
-        await t._run_top_bw_alert_engine([{"name": "PC-1", "rx_rate": 3_125_000, "tx_rate": 0}])   # 25 Mbps
-        await t._run_top_bw_alert_engine([{"name": "PC-1", "rx_rate": 3_125_000, "tx_rate": 0}])   # 25 Mbps
-        await t._run_top_bw_alert_engine([{"name": "PC-1", "rx_rate": 3_125_000, "tx_rate": 0}])   # 25 Mbps
-        await t._run_top_bw_alert_engine([{"name": "PC-1", "rx_rate": 6_875_000, "tx_rate": 0}])   # 55 Mbps
-        await t._run_top_bw_alert_engine([{"name": "PC-1", "rx_rate": 6_875_000, "tx_rate": 0}])   # 55 Mbps
-        await t._run_top_bw_alert_engine([{"name": "PC-1", "rx_rate": 625_000, "tx_rate": 0}])     # 5 Mbps
+        await t._run_top_bw_alert_engine([{"name": "PC-1", "rx_rate": 25_000_000, "tx_rate": 0}])  # 25 Mbps
+        await t._run_top_bw_alert_engine([{"name": "PC-1", "rx_rate": 25_000_000, "tx_rate": 0}])  # 25 Mbps
+        await t._run_top_bw_alert_engine([{"name": "PC-1", "rx_rate": 25_000_000, "tx_rate": 0}])  # 25 Mbps
+        await t._run_top_bw_alert_engine([{"name": "PC-1", "rx_rate": 55_000_000, "tx_rate": 0}])  # 55 Mbps
+        await t._run_top_bw_alert_engine([{"name": "PC-1", "rx_rate": 55_000_000, "tx_rate": 0}])  # 55 Mbps
+        await t._run_top_bw_alert_engine([{"name": "PC-1", "rx_rate": 5_000_000, "tx_rate": 0}])   # 5 Mbps
 
         sent_messages = [call.args[0] for call in mock_send.await_args_list]
         assert any("TOP BW WARNING" in msg for msg in sent_messages)
@@ -614,7 +614,7 @@ class TestTopBandwidthHelpers:
         monkeypatch.setattr(t.cfg, "TRAFFIC_LEAK_THRESHOLD_MBPS", 25, raising=False)
         monkeypatch.setattr(t.cfg, "TRAFFIC_LEAK_WHITELIST", [], raising=False)
 
-        await t._cek_per_host_traffic([{"name": "PC-B", "rx_rate": 2_500_000, "tx_rate": 1_250_000}])  # 20/10 Mbps
+        await t._cek_per_host_traffic([{"name": "PC-B", "rx_rate": 20_000_000, "tx_rate": 10_000_000}])  # 20/10 Mbps
 
         assert mock_send.await_count == 0
 

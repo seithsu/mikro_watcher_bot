@@ -597,9 +597,9 @@ def _classify_bw_level(peak_mbps):
 
 
 def _queue_rate_to_mbps(raw_rate):
-    """Konversi rate simple queue RouterOS (byte/s) ke Mbps."""
+    """Konversi rate simple queue RouterOS (bit/s) ke Mbps."""
     try:
-        return (float(raw_rate or 0) * 8.0) / 1_000_000
+        return float(raw_rate or 0) / 1_000_000
     except (TypeError, ValueError):
         return 0.0
 
@@ -812,7 +812,7 @@ async def _cek_per_host_traffic(queue_list):
 
     # Legacy mode (backward-compatible) jika engine baru dimatikan.
     global _alerted_hosts_traffic
-    threshold_bps = (cfg.TRAFFIC_LEAK_THRESHOLD_MBPS * 1_000_000) / 8.0
+    threshold_bps = cfg.TRAFFIC_LEAK_THRESHOLD_MBPS * 1_000_000
 
     for q in queue_list:
         if not isinstance(q, dict):
