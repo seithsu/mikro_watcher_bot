@@ -346,6 +346,8 @@ def _is_queue_change_log(topics, message_text):
     msg = str(message_text or "").lower()
     if "queue" not in msg:
         return False
+    if "by admin" not in msg:
+        return False
 
     action_tokens = (
         "added",

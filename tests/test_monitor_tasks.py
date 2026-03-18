@@ -281,6 +281,22 @@ class TestQueueChangeLogDetection:
             "interface ether1 link up",
         ) is False
 
+    def test_generic_queue_added_without_admin_not_detected(self):
+        from monitor.tasks import _is_queue_change_log
+
+        assert _is_queue_change_log(
+            "system,info",
+            "simple queue added",
+        ) is False
+
+    def test_generic_queue_removed_without_admin_not_detected(self):
+        from monitor.tasks import _is_queue_change_log
+
+        assert _is_queue_change_log(
+            "system,info",
+            "simple queue removed",
+        ) is False
+
 
 class TestShieldTrustedIps:
     def test_extract_login_failure_ip_valid(self):
@@ -1477,3 +1493,52 @@ class TestMonitorTaskLoops:
             await t.task_monitor_logs()
 
         bot_mock.send_message.assert_awaited()
+
+    @pytest.mark.asyncio
+    async def test_task_monitor_logs_skips_generic_queue_info_log(self, monkeypatch):
+        import monitor.tasks as t
+
+        monkeypatch.setattr(t, "_pause_if_api_unavailable", AsyncMock(return_value=False))
+        monkeypatch.setattr(t.cfg, "reload_runtime_overrides", lambda min_interval=10: None, raising=False)
+        monkeypatch.setattr(t.cfg, "reload_router_env", lambda min_interval=10: None, raising=False)
+        monkeypatch.setattr(t.cfg, "MONITOR_LOG_INTERVAL", 1, raising=False)
+        monkeypatch.setattr(t.cfg, "MONITOR_LOG_FETCH_LINES", 50, raising=False)
+        monkeypatch.setattr(t.cfg, "ADMIN_IDS", [111], raising=False)
+        monkeypatch.setattr(t.cfg, "BOT_IP", "", raising=False)
+        monkeypatch.setattr(t.cfg, "MIKROTIK_USER", "admin", raising=False)
+        monkeypatch.setattr(t.cfg, "API_ACCOUNT_SKIP_USERS", ["admin"], raising=False)
+
+        logs_baseline = [{"time": "10:00:00", "topics": "system,info", "message": "boot"}]
+        logs_tick = [{
+            "time": "10:00:01",
+            "topics": "system,info",
+            "message": "simple queue removed",
+        }]
+        calls = {"n": 0}
+
+        def fake_get_log(_lines):
+            calls["n"] += 1
+            return logs_baseline if calls["n"] == 1 else logs_tick
+
+        monkeypatch.setattr(t, "get_mikrotik_log", fake_get_log)
+
+        bot_mock = MagicMock()
+        bot_mock.send_message = AsyncMock()
+        monkeypatch.setattr(t, "bot", bot_mock)
+
+        async def fake_with_timeout(coro, timeout=15, default=None, **kwargs):
+            try:
+                return await coro if asyncio.iscoroutine(coro) else coro
+            except Exception:
+                return default
+
+        async def stop_sleep(_seconds):
+            raise asyncio.CancelledError()
+
+        monkeypatch.setattr(t, "with_timeout", fake_with_timeout)
+        monkeypatch.setattr(t.asyncio, "sleep", stop_sleep)
+
+        with pytest.raises(asyncio.CancelledError):
+            await t.task_monitor_logs()
+
+        bot_mock.send_message.assert_not_awaited()
