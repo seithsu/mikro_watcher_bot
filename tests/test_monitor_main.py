@@ -16,6 +16,7 @@ async def test_main_async_runs_all_tasks_once(monkeypatch):
         called["count"] += 1
 
     monkeypatch.setattr(tasks, "task_monitor_system", _tick)
+    monkeypatch.setattr(tasks, "task_monitor_resources", _tick)
     monkeypatch.setattr(tasks, "task_monitor_traffic", _tick)
     monkeypatch.setattr(tasks, "task_monitor_top_bandwidth", _tick)
     monkeypatch.setattr(tasks, "task_monitor_logs", _tick)
@@ -28,7 +29,7 @@ async def test_main_async_runs_all_tasks_once(monkeypatch):
     monkeypatch.setattr(mon.asyncio, "get_event_loop", lambda: fake_signal_loop)
 
     await mon.main_async()
-    assert called["count"] == 7
+    assert called["count"] == 8
 
 
 @pytest.mark.asyncio
@@ -55,6 +56,7 @@ def test_main_initializes_and_runs_with_alert_gate(monkeypatch):
         ("MIKROTIK_USE_SSL", False),
         ("MIKROTIK_TLS_VERIFY", True),
         ("MONITOR_INTERVAL", 300),
+        ("RESOURCE_MONITOR_INTERVAL", 60),
         ("MONITOR_LOG_INTERVAL", 30),
         ("TOP_BW_ALERT_INTERVAL", 15),
         ("ADMIN_IDS", [123456]),

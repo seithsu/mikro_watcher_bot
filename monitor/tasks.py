@@ -528,7 +528,6 @@ async def task_monitor_system():
                 await _sleep_with_jitter(interval)
                 continue
 
-            await cek_cpu_ram(info)
             await cek_disk(info)
             # W2 FIX: Ambil interfaces sekali dan reuse untuk cek_interface + traffic check
             _cached_interfaces = await _get_interfaces_snapshot(cache_ttl=max(interval, 180))
@@ -577,6 +576,57 @@ async def task_monitor_system():
                     f"[ALERT] Router Monitor Error!\n{str(e)[:100]}"
                 )
                 _last_error_alert_time = now
+
+        await _sleep_with_jitter(interval)
+
+
+async def task_monitor_resources():
+    """Task 1b: Monitor resource CPU/RAM lebih rapat tanpa membebani full system check."""
+    interval = int(getattr(cfg, "RESOURCE_MONITOR_INTERVAL", 60) or 60)
+    logger.info(f"[INIT] Resource Monitor berjalan (Interval: {interval}s)")
+
+    _last_error_alert_time = 0
+    _ERROR_ALERT_COOLDOWN = 900
+
+    while True:
+        try:
+            if apply_runtime_reset_if_signaled():
+                _last_error_alert_time = 0
+
+            cfg.reload_runtime_overrides(min_interval=10)
+            cfg.reload_router_env(min_interval=10)
+            interval = int(getattr(cfg, "RESOURCE_MONITOR_INTERVAL", 60) or 60)
+
+            if await _pause_if_api_unavailable("resources", interval):
+                continue
+
+            info = await with_timeout(
+                asyncio.to_thread(get_status),
+                timeout=15,
+                log_key="resources:get_status",
+                warn_every_sec=300,
+            )
+            if info is None:
+                logger.warning("[ERR] resources:get_status timed out")
+                await _sleep_with_jitter(interval)
+                continue
+
+            await cek_cpu_ram(info)
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.error(f"[ERR] Task Resource Monitor: {e}")
+            now = time.time()
+            if now - _last_error_alert_time >= _ERROR_ALERT_COOLDOWN:
+                try:
+                    await kirim_ke_semua_admin(
+                        f"⚠️ <b>Resource Monitor Error</b>\n\n<code>{str(e)[:300]}</code>",
+                        parse_mode='HTML',
+                        severity=AlertSeverity.WARNING,
+                    )
+                    _last_error_alert_time = now
+                except Exception:
+                    pass
 
         await _sleep_with_jitter(interval)
 

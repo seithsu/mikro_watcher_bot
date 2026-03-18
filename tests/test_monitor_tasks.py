@@ -57,8 +57,9 @@ class TestTaskMonitorSystem:
     @pytest.mark.asyncio
     async def test_check_functions_are_importable(self):
         """Verify semua check functions bisa di-import."""
-        from monitor.tasks import task_monitor_system, task_monitor_logs, task_monitor_dhcp_arp
+        from monitor.tasks import task_monitor_system, task_monitor_resources, task_monitor_logs, task_monitor_dhcp_arp
         assert callable(task_monitor_system)
+        assert callable(task_monitor_resources)
         assert callable(task_monitor_logs)
         assert callable(task_monitor_dhcp_arp)
 
@@ -1015,17 +1016,13 @@ class TestMonitorTaskLoops:
         t._record_top_queue_metrics_and_alerts.assert_awaited_once()
 
     @pytest.mark.asyncio
-    async def test_task_monitor_system_outer_error_sends_alert(self, monkeypatch):
+    async def test_task_monitor_resources_outer_error_sends_alert(self, monkeypatch):
         import monitor.tasks as t
 
-        monkeypatch.setattr(t.cfg, "MONITOR_INTERVAL", 1, raising=False)
+        monkeypatch.setattr(t.cfg, "RESOURCE_MONITOR_INTERVAL", 1, raising=False)
         monkeypatch.setattr(t.cfg, "reload_runtime_overrides", lambda min_interval=10: None, raising=False)
         monkeypatch.setattr(t.cfg, "reload_router_env", lambda min_interval=10: None, raising=False)
         monkeypatch.setattr(t, "_pause_if_api_unavailable", AsyncMock(return_value=False))
-        monkeypatch.setattr(t.database, "cleanup_old_data", MagicMock(return_value=0))
-        monkeypatch.setattr(t.database, "close_stale_incidents", MagicMock(return_value=0))
-        monkeypatch.setattr(t._pool, "health_check", lambda: True)
-        monkeypatch.setattr(t.time, "time", lambda: 1000.0)
         monkeypatch.setattr(t, "get_status", lambda: {'cpu': '10', 'ram_total': '100', 'ram_free': '50', 'uptime': '1d', 'version': '7.14'})
         monkeypatch.setattr(t, "cek_cpu_ram", AsyncMock(side_effect=RuntimeError("cpu boom")))
         monkeypatch.setattr(t, "kirim_ke_semua_admin", AsyncMock())
@@ -1040,9 +1037,34 @@ class TestMonitorTaskLoops:
         monkeypatch.setattr(t.asyncio, "sleep", stop_sleep)
 
         with pytest.raises(asyncio.CancelledError):
-            await t.task_monitor_system()
+            await t.task_monitor_resources()
 
-        assert any("Router Monitor Error" in call.args[0] for call in t.kirim_ke_semua_admin.await_args_list)
+        assert any("Resource Monitor Error" in call.args[0] for call in t.kirim_ke_semua_admin.await_args_list)
+
+    @pytest.mark.asyncio
+    async def test_task_monitor_resources_calls_cpu_ram_check(self, monkeypatch):
+        import monitor.tasks as t
+
+        monkeypatch.setattr(t.cfg, "RESOURCE_MONITOR_INTERVAL", 1, raising=False)
+        monkeypatch.setattr(t.cfg, "reload_runtime_overrides", lambda min_interval=10: None, raising=False)
+        monkeypatch.setattr(t.cfg, "reload_router_env", lambda min_interval=10: None, raising=False)
+        monkeypatch.setattr(t, "_pause_if_api_unavailable", AsyncMock(return_value=False))
+        monkeypatch.setattr(t, "get_status", lambda: {'cpu': '11', 'ram_total': '100', 'ram_free': '50', 'uptime': '1d', 'version': '7.14'})
+        monkeypatch.setattr(t, "cek_cpu_ram", AsyncMock())
+
+        async def fake_with_timeout(coro, timeout=10, default=None, **kwargs):
+            return await coro if asyncio.iscoroutine(coro) else coro
+
+        async def stop_sleep(_seconds):
+            raise asyncio.CancelledError()
+
+        monkeypatch.setattr(t, "with_timeout", fake_with_timeout)
+        monkeypatch.setattr(t.asyncio, "sleep", stop_sleep)
+
+        with pytest.raises(asyncio.CancelledError):
+            await t.task_monitor_resources()
+
+        t.cek_cpu_ram.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_task_monitor_traffic_records_batch_once(self, monkeypatch):

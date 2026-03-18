@@ -18,8 +18,10 @@ class TestCekCpuRam:
 
     @pytest.mark.asyncio
     @patch('monitor.checks.kirim_ke_semua_admin', new_callable=AsyncMock)
-    async def test_cpu_normal_no_alert(self, mock_send):
+    async def test_cpu_normal_no_alert(self, mock_send, monkeypatch):
         from monitor.checks import cek_cpu_ram
+        import monitor.checks
+        monkeypatch.setattr(monitor.checks.cfg, 'CPU_THRESHOLD', 80, raising=False)
         info = {'cpu': '30', 'ram_total': '1073741824', 'ram_free': '536870912', 'uptime': '1d'}
         cpu, ram = await cek_cpu_ram(info)
         assert cpu == 30
@@ -28,10 +30,11 @@ class TestCekCpuRam:
 
     @pytest.mark.asyncio
     @patch('monitor.checks.kirim_ke_semua_admin', new_callable=AsyncMock)
-    async def test_cpu_high_triggers_alert(self, mock_send):
+    async def test_cpu_high_triggers_alert(self, mock_send, monkeypatch):
         from monitor.checks import cek_cpu_ram
         import monitor.checks
         monitor.checks._last_alerts['cpu'] = False
+        monkeypatch.setattr(monitor.checks.cfg, 'CPU_THRESHOLD', 80, raising=False)
 
         info = {'cpu': '95', 'ram_total': '1073741824', 'ram_free': '536870912', 'uptime': '1d'}
         await cek_cpu_ram(info)
@@ -40,10 +43,11 @@ class TestCekCpuRam:
 
     @pytest.mark.asyncio
     @patch('monitor.checks.kirim_ke_semua_admin', new_callable=AsyncMock)
-    async def test_cpu_recovery(self, mock_send):
+    async def test_cpu_recovery(self, mock_send, monkeypatch):
         from monitor.checks import cek_cpu_ram
         import monitor.checks
         monitor.checks._last_alerts['cpu'] = True  # Was high
+        monkeypatch.setattr(monitor.checks.cfg, 'CPU_THRESHOLD', 80, raising=False)
 
         info = {'cpu': '20', 'ram_total': '1073741824', 'ram_free': '536870912', 'uptime': '1d'}
         await cek_cpu_ram(info)
@@ -52,10 +56,11 @@ class TestCekCpuRam:
 
     @pytest.mark.asyncio
     @patch('monitor.checks.kirim_ke_semua_admin', new_callable=AsyncMock)
-    async def test_ram_high_triggers_alert(self, mock_send):
+    async def test_ram_high_triggers_alert(self, mock_send, monkeypatch):
         from monitor.checks import cek_cpu_ram
         import monitor.checks
         monitor.checks._last_alerts['ram'] = False
+        monkeypatch.setattr(monitor.checks.cfg, 'CPU_THRESHOLD', 80, raising=False)
 
         # RAM 95% used: total=1GB, free=50MB
         info = {'cpu': '10', 'ram_total': '1073741824', 'ram_free': '52428800', 'uptime': '1d'}
@@ -64,11 +69,12 @@ class TestCekCpuRam:
 
     @pytest.mark.asyncio
     @patch('monitor.checks.kirim_ke_semua_admin', new_callable=AsyncMock)
-    async def test_no_duplicate_cpu_alert(self, mock_send):
+    async def test_no_duplicate_cpu_alert(self, mock_send, monkeypatch):
         """Tidak kirim alert jika sudah alert sebelumnya."""
         from monitor.checks import cek_cpu_ram
         import monitor.checks
         monitor.checks._last_alerts['cpu'] = True  # Already alerted
+        monkeypatch.setattr(monitor.checks.cfg, 'CPU_THRESHOLD', 80, raising=False)
 
         info = {'cpu': '95', 'ram_total': '1073741824', 'ram_free': '536870912', 'uptime': '1d'}
         await cek_cpu_ram(info)

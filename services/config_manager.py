@@ -25,6 +25,7 @@ _CONFIGURABLE = {
     'RAM_THRESHOLD': {'type': int, 'min': 10, 'max': 100, 'label': 'RAM Threshold (%)'},
     'DISK_THRESHOLD': {'type': int, 'min': 10, 'max': 100, 'label': 'Disk Threshold (%)'},
     'MONITOR_INTERVAL': {'type': int, 'min': 10, 'max': 86400, 'label': 'Monitor Interval (detik)'},
+    'RESOURCE_MONITOR_INTERVAL': {'type': int, 'min': 10, 'max': 86400, 'label': 'CPU/RAM Monitor Interval (detik)'},
     'NETWATCH_INTERVAL': {'type': int, 'min': 5, 'max': 3600, 'label': 'Netwatch Interval (detik)'},
     'NETWATCH_IGNORE_HOSTS': {'type': str, 'label': 'Netwatch Ignore Hosts'},
     'NETWATCH_FAIL_THRESHOLD_OVERRIDES': {'type': str, 'label': 'Netwatch Fail Threshold Overrides'},
@@ -67,7 +68,7 @@ _CONFIGURABLE = {
 _CATEGORIES = {
     '⚙️ Monitoring': [
         'CPU_THRESHOLD', 'RAM_THRESHOLD', 'DISK_THRESHOLD',
-        'MONITOR_INTERVAL', 'NETWATCH_INTERVAL', 'NETWATCH_IGNORE_HOSTS', 'NETWATCH_FAIL_THRESHOLD_OVERRIDES',
+        'MONITOR_INTERVAL', 'RESOURCE_MONITOR_INTERVAL', 'NETWATCH_INTERVAL', 'NETWATCH_IGNORE_HOSTS', 'NETWATCH_FAIL_THRESHOLD_OVERRIDES',
         'PING_COUNT', 'MONITOR_LOG_INTERVAL', 'MONITOR_LOG_FETCH_LINES',
         'NETWATCH_PING_CONCURRENCY', 'API_ACCOUNT_DEDUP_WINDOW_SEC', 'MONITOR_VPN_ENABLED',
     ],

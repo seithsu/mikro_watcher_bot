@@ -16,6 +16,7 @@ logger = logging.getLogger(__name__)
 
 _TASK_STARTUP_DELAYS = {
     "system": 0,
+    "resources": 1,
     "alert_maintenance": 0,
     "top_bw": 2,
     "logs": 4,
@@ -37,7 +38,7 @@ async def _run_task_with_startup_delay(name, task_factory):
 async def main_async():
     """Main Loop Async dengan graceful shutdown."""
     from .tasks import (
-        task_monitor_system, task_monitor_logs, task_monitor_dhcp_arp,
+        task_monitor_system, task_monitor_resources, task_monitor_logs, task_monitor_dhcp_arp,
         task_monitor_traffic, task_monitor_top_bandwidth, task_monitor_alert_maintenance
     )
     from .netwatch import task_monitor_netwatch
@@ -55,6 +56,7 @@ async def main_async():
 
     tasks = [
         asyncio.create_task(_run_task_with_startup_delay("system", task_monitor_system)),
+        asyncio.create_task(_run_task_with_startup_delay("resources", task_monitor_resources)),
         asyncio.create_task(_run_task_with_startup_delay("traffic", task_monitor_traffic)),
         asyncio.create_task(_run_task_with_startup_delay("top_bw", task_monitor_top_bandwidth)),
         asyncio.create_task(_run_task_with_startup_delay("logs", task_monitor_logs)),
@@ -107,12 +109,14 @@ def main():
         )
 
     interval_menit = int(getattr(cfg, "MONITOR_INTERVAL", MONITOR_INTERVAL)) // 60
+    resource_interval = int(getattr(cfg, "RESOURCE_MONITOR_INTERVAL", 60) or 60)
     admin_list = ", ".join(str(a) for a in getattr(cfg, "ADMIN_IDS", ADMIN_IDS))
 
     logger.info("=" * 40)
     logger.info("MONITOR OTOMATIS MIKROTIK")
     logger.info("=" * 40)
     logger.info(f"System Check: Tiap {interval_menit} menit")
+    logger.info(f"Resource Check: Tiap {resource_interval} detik")
     logger.info("Traffic Check: Tiap 60 detik")
     logger.info(f"Top BW Check: Tiap {max(5, int(getattr(cfg, 'TOP_BW_ALERT_INTERVAL', 15)))} detik")
     logger.info(f"Log Check   : Tiap {int(getattr(cfg, 'MONITOR_LOG_INTERVAL', MONITOR_LOG_INTERVAL))} detik")

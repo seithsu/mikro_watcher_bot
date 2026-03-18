@@ -48,6 +48,7 @@ class TestConfigParsing:
             "RAM_THRESHOLD",
             "DISK_THRESHOLD",
             "MONITOR_INTERVAL",
+            "RESOURCE_MONITOR_INTERVAL",
             "PING_COUNT",
             "RATE_LIMIT_PER_MINUTE",
             "REBOOT_COOLDOWN",
@@ -62,6 +63,7 @@ class TestConfigParsing:
         assert core.config.RAM_THRESHOLD == 90
         assert core.config.DISK_THRESHOLD == 85
         assert core.config.MONITOR_INTERVAL == 300
+        assert core.config.RESOURCE_MONITOR_INTERVAL == 60
         assert isinstance(core.config.PING_COUNT, int)
         assert isinstance(core.config.RATE_LIMIT_PER_MINUTE, int)
         assert isinstance(core.config.REBOOT_COOLDOWN, int)
