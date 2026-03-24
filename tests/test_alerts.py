@@ -66,6 +66,7 @@ class TestIpcHelpers:
     def test_append_and_consume_ack_events(self, tmp_path, monkeypatch):
         from monitor import alerts
         monkeypatch.setattr(alerts, "_ACK_EVENTS_FILE", tmp_path / "ack_events.json", raising=False)
+        monkeypatch.setattr(alerts, "_IPC_LOCK_FILE", tmp_path / "pending_acks.lock", raising=False)
         alerts._append_ack_event("k1")
         alerts._append_ack_event("*")
         assert alerts._consume_ack_events() == ["k1", "*"]

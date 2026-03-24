@@ -1051,6 +1051,7 @@ class TestMonitorTaskLoops:
         monkeypatch.setattr(t, "_pause_if_api_unavailable", AsyncMock(return_value=False))
         monkeypatch.setattr(t, "get_status", lambda: {'cpu': '11', 'ram_total': '100', 'ram_free': '50', 'uptime': '1d', 'version': '7.14'})
         monkeypatch.setattr(t, "cek_cpu_ram", AsyncMock())
+        monkeypatch.setattr(t, "cek_uptime_anomaly", AsyncMock())
 
         async def fake_with_timeout(coro, timeout=10, default=None, **kwargs):
             return await coro if asyncio.iscoroutine(coro) else coro
@@ -1065,6 +1066,7 @@ class TestMonitorTaskLoops:
             await t.task_monitor_resources()
 
         t.cek_cpu_ram.assert_awaited_once()
+        t.cek_uptime_anomaly.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_task_monitor_traffic_records_batch_once(self, monkeypatch):

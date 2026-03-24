@@ -4,6 +4,7 @@
 # ============================================
 
 import os
+import runpy
 import zipfile
 import pytest
 from pathlib import Path
@@ -75,3 +76,15 @@ class TestBackupSemua:
             assert "nonexistent_file.py" not in names
 
         os.remove(result)
+
+    def test_module_main_runs_as_script(self, tmp_path, monkeypatch):
+        """Menjalankan core.backup sebagai script harus masuk ke blok __main__."""
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / "bot.py").write_text("print('bot')", encoding="utf-8")
+
+        with patch("logging.basicConfig") as basic_config:
+            runpy.run_module("core.backup", run_name="__main__")
+
+        basic_config.assert_called_once()
+        created = list(tmp_path.glob("backup_bot_*.zip"))
+        assert len(created) == 1

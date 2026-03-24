@@ -224,6 +224,7 @@ class TestCekUptimeAnomaly:
     def setup_method(self):
         import monitor.checks
         monitor.checks._last_uptime_seconds = None
+        monitor.checks._last_alerts['uptime_baseline'] = 0
 
     @pytest.mark.asyncio
     @patch('monitor.checks.kirim_ke_semua_admin', new_callable=AsyncMock)
@@ -255,6 +256,32 @@ class TestCekUptimeAnomaly:
         await cek_uptime_anomaly(info)
         mock_send.assert_called()
         assert 'Restart' in mock_send.call_args[0][0]
+
+    @pytest.mark.asyncio
+    @patch('monitor.checks.kirim_ke_semua_admin', new_callable=AsyncMock)
+    async def test_restart_detected_even_after_longer_boot(self, mock_send):
+        import monitor.checks
+        monitor.checks._last_uptime_seconds = 86400  # 1 day
+
+        from monitor.checks import cek_uptime_anomaly
+        await cek_uptime_anomaly({'uptime': '17m'})
+
+        mock_send.assert_called_once()
+        assert '17m' in mock_send.call_args[0][0]
+
+    @pytest.mark.asyncio
+    @patch('monitor.checks.kirim_ke_semua_admin', new_callable=AsyncMock)
+    async def test_restart_detected_from_persisted_baseline(self, mock_send):
+        import monitor.checks
+        monitor.checks._last_uptime_seconds = None
+        monitor.checks._last_alerts['uptime_baseline'] = 86400
+
+        from monitor.checks import cek_uptime_anomaly
+        await cek_uptime_anomaly({'uptime': '12m'})
+
+        mock_send.assert_called_once()
+        assert monitor.checks._last_uptime_seconds == 720
+        assert monitor.checks._last_alerts['uptime_baseline'] == 720
 
     @pytest.mark.asyncio
     @patch('monitor.checks.kirim_ke_semua_admin', new_callable=AsyncMock)

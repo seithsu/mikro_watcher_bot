@@ -28,6 +28,7 @@ def _state_snapshot():
         'iface_down': tuple(sorted(_last_alerts.get('iface_down', set()))),
         'vpn_down': tuple(sorted(_last_alerts.get('vpn_down', set()))),
         '_initialized': bool(_last_alerts.get('_initialized', False)),
+        'uptime_baseline': int(_last_alerts.get('uptime_baseline', 0) or 0),
     }
 
 
@@ -46,12 +47,14 @@ def _load_state():
                 'iface_down': set(saved.get('iface_down', [])),
                 'vpn_down': set(saved.get('vpn_down', [])),
                 '_initialized': saved.get('_initialized', False),
+                'uptime_baseline': int(saved.get('uptime_baseline', 0) or 0),
             }
     except Exception as e:
         logger.debug("_load_state error: %s", e)
     return {
         'cpu': False, 'ram': False, 'disk': False, 'firmware_checked': False,
         'iface_down': set(), 'vpn_down': set(), '_initialized': False,
+        'uptime_baseline': 0,
     }
 
 
@@ -66,6 +69,7 @@ def _save_state():
             'iface_down': list(_last_alerts.get('iface_down', set())),
             'vpn_down': list(_last_alerts.get('vpn_down', set())),
             '_initialized': _last_alerts.get('_initialized', False),
+            'uptime_baseline': int(_last_alerts.get('uptime_baseline', 0) or 0),
         }
         cfg.DATA_DIR.mkdir(parents=True, exist_ok=True)
         tmp_path = str(_STATE_FILE) + '.tmp'
@@ -102,6 +106,7 @@ def clear_runtime_state():
         'iface_down': set(),
         'vpn_down': set(),
         '_initialized': False,
+        'uptime_baseline': 0,
     })
     _last_uptime_seconds = None
     _firmware_last_check = 0
@@ -241,6 +246,7 @@ async def cek_uptime_anomaly(info):
     global _last_uptime_seconds
 
     uptime_str = info.get('uptime', '')
+    state_before = _state_snapshot()
     try:
         import re
         uptime_text = str(uptime_str or '').strip()
@@ -257,18 +263,28 @@ async def cek_uptime_anomaly(info):
             logger.debug("cek_uptime_anomaly skip unparseable uptime: %r", uptime_str)
             return
 
+        if _last_uptime_seconds is None:
+            persisted_baseline = int(_last_alerts.get('uptime_baseline', 0) or 0)
+            if persisted_baseline > 0:
+                _last_uptime_seconds = persisted_baseline
+
+        restart_detected = False
         if _last_uptime_seconds is not None:
-            if total_seconds < _last_uptime_seconds and total_seconds < 600:
-                await kirim_ke_semua_admin(
-                    f"[WARN] <b>Router Restart Terdeteksi!</b>\n\n"
-                    f"Uptime baru: <b>{uptime_str}</b>\n\n"
-                    f"Router ter-restart tanpa perintah dari bot.\n"
-                    f"Kemungkinan: power cycle, crash, atau restart manual.",
-                    parse_mode='HTML'
-                )
-                logger.info(f"[SENT] Uptime anomaly detected: {uptime_str}")
+            restart_detected = total_seconds < _last_uptime_seconds
 
         _last_uptime_seconds = total_seconds
+        _last_alerts['uptime_baseline'] = total_seconds
+        _save_state_if_changed(state_before)
+
+        if restart_detected:
+            await kirim_ke_semua_admin(
+                f"[WARN] <b>Router Restart Terdeteksi!</b>\n\n"
+                f"Uptime baru: <b>{uptime_str}</b>\n\n"
+                f"Router ter-restart tanpa perintah dari bot.\n"
+                f"Kemungkinan: power cycle, crash, atau restart manual.",
+                parse_mode='HTML'
+            )
+            logger.info(f"[SENT] Uptime anomaly detected: {uptime_str}")
     except Exception as e:
         logger.debug(f"cek_uptime_anomaly error: {e}")
 

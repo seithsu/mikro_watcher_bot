@@ -532,7 +532,6 @@ async def task_monitor_system():
             # W2 FIX: Ambil interfaces sekali dan reuse untuk cek_interface + traffic check
             _cached_interfaces = await _get_interfaces_snapshot(cache_ttl=max(interval, 180))
             await cek_interface(_cached_interfaces)
-            await cek_uptime_anomaly(info)
             await cek_firmware()
             await cek_vpn_tunnels()
 
@@ -612,6 +611,7 @@ async def task_monitor_resources():
                 continue
 
             await cek_cpu_ram(info)
+            await cek_uptime_anomaly(info)
         except asyncio.CancelledError:
             raise
         except Exception as e:

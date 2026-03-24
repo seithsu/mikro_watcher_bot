@@ -268,3 +268,199 @@ class TestConfigManager:
         with config_manager._config_lock(timeout=0.2, poll_interval=0.01):
             assert lock_file.exists()
 
+    def test_config_lock_times_out_on_active_lock(self, tmp_path, monkeypatch):
+        from services import config_manager
+
+        lock_file = tmp_path / "runtime_config.lock"
+        monkeypatch.setattr(config_manager, "_CONFIG_LOCK_FILE", lock_file, raising=False)
+        monkeypatch.setattr(config_manager, "_CONFIG_LOCK_STALE_SEC", 3600, raising=False)
+        lock_file.write_text(json.dumps({"pid": 999, "ts": time.time()}), encoding="utf-8")
+
+        with pytest.raises(TimeoutError):
+            with config_manager._config_lock(timeout=0.01, poll_interval=0.001):
+                pass
+
+    def test_parse_bool_value_numeric_and_invalid(self):
+        from services import config_manager
+
+        assert config_manager._parse_bool_value(1) is True
+        assert config_manager._parse_bool_value(0.0) is False
+        with pytest.raises(ValueError):
+            config_manager._parse_bool_value(object())
+
+    def test_sanitize_overrides_filters_invalid_values(self):
+        from services import config_manager
+
+        result = config_manager._sanitize_overrides({
+            "CPU_THRESHOLD": "70",
+            "MONITOR_VPN_ENABLED": "yes",
+            "INVALID_KEY": 1,
+            "RAM_THRESHOLD": "999",
+            "ALERT_REQUIRE_START": "not-bool",
+            "PING_COUNT": "nope",
+        })
+
+        assert result["CPU_THRESHOLD"] == 70
+        assert result["MONITOR_VPN_ENABLED"] is True
+        assert "INVALID_KEY" not in result
+        assert "RAM_THRESHOLD" not in result
+        assert "ALERT_REQUIRE_START" not in result
+        assert "PING_COUNT" not in result
+
+    def test_sanitize_overrides_non_dict_returns_empty(self):
+        from services import config_manager
+
+        assert config_manager._sanitize_overrides([]) == {}
+
+    def test_load_overrides_invalid_json_returns_empty(self, tmp_path, monkeypatch):
+        from services import config_manager
+        config_file = tmp_path / "runtime_config.json"
+        config_file.write_text("{broken", encoding="utf-8")
+        monkeypatch.setattr(config_manager, "_CONFIG_FILE", config_file, raising=False)
+
+        assert config_manager._load_overrides() == {}
+
+    def test_apply_overrides_on_startup_parses_ignore_queue_list(self, monkeypatch):
+        from services import config_manager
+
+        monkeypatch.setattr(
+            config_manager,
+            "_load_overrides",
+            lambda: {"TOP_BW_ALERT_IGNORE_QUEUES": "A,B", "CPU_THRESHOLD": 55},
+            raising=False,
+        )
+        monkeypatch.setattr(config_manager._cfg_module, "TOP_BW_ALERT_IGNORE_QUEUES", [], raising=False)
+        monkeypatch.setattr(config_manager._cfg_module, "CPU_THRESHOLD", 80, raising=False)
+
+        config_manager._apply_overrides_on_startup()
+
+        assert config_manager._cfg_module.TOP_BW_ALERT_IGNORE_QUEUES == ["A", "B"]
+        assert config_manager._cfg_module.CPU_THRESHOLD == 55
+
+    def test_save_overrides_cleanup_on_failure(self, tmp_path, monkeypatch):
+        from services import config_manager
+
+        config_file = tmp_path / "runtime_config.json"
+        monkeypatch.setattr(config_manager, "_CONFIG_FILE", config_file, raising=False)
+        monkeypatch.setattr(config_manager, "_config_lock", lambda: __import__("contextlib").nullcontext(), raising=False)
+
+        created_tmp = {}
+        import tempfile
+
+        original_mkstemp = tempfile.mkstemp
+        def fake_mkstemp(**kwargs):
+            fd, path = original_mkstemp(**kwargs)
+            created_tmp["path"] = path
+            return fd, path
+
+        monkeypatch.setattr(config_manager.tempfile, "mkstemp", fake_mkstemp, raising=False)
+        monkeypatch.setattr(config_manager.os, "replace", MagicMock(side_effect=RuntimeError("replace-fail")), raising=False)
+
+        config_manager._save_overrides({"CPU_THRESHOLD": 60})
+
+        assert created_tmp["path"]
+        assert not Path(created_tmp["path"]).exists()
+
+    def test_config_lock_cleanup_tolerates_os_errors(self, tmp_path, monkeypatch):
+        from services import config_manager
+        import os
+
+        lock_file = tmp_path / "runtime_config.lock"
+        monkeypatch.setattr(config_manager, "_CONFIG_LOCK_FILE", lock_file, raising=False)
+
+        original_open = config_manager.os.open
+        original_write = config_manager.os.write
+        original_close = os.close
+        original_unlink = os.unlink
+        state = {"fd": None}
+
+        def fake_open(*args, **kwargs):
+            fd = original_open(*args, **kwargs)
+            state["fd"] = fd
+            return fd
+
+        monkeypatch.setattr(config_manager.os, "open", fake_open, raising=False)
+        monkeypatch.setattr(config_manager.os, "write", original_write, raising=False)
+        monkeypatch.setattr(config_manager.os, "close", MagicMock(side_effect=OSError("close-fail")), raising=False)
+        monkeypatch.setattr(config_manager.os, "unlink", MagicMock(side_effect=OSError("unlink-fail")), raising=False)
+
+        with config_manager._config_lock(timeout=0.2, poll_interval=0.01):
+            assert lock_file.exists()
+
+        if state["fd"] is not None:
+            try:
+                original_close(state["fd"])
+            except OSError:
+                pass
+        if lock_file.exists():
+            original_unlink(lock_file)
+
+    def test_set_config_ignores_runtime_reset_emit_failure(self, tmp_path, monkeypatch):
+        from services import config_manager
+
+        config_file = tmp_path / "runtime_config.json"
+        monkeypatch.setattr(config_manager, "_CONFIG_FILE", config_file, raising=False)
+
+        with patch('core.database.audit_log', MagicMock()), patch(
+            'core.runtime_reset_signal.emit_runtime_reset_signal',
+            MagicMock(side_effect=RuntimeError("signal-fail"))
+        ):
+            success, _ = config_manager.set_config('CPU_THRESHOLD', '60', 1, 'tester')
+
+        assert success is True
+
+    def test_set_config_ignores_audit_log_failure(self, tmp_path, monkeypatch):
+        from services import config_manager
+
+        config_file = tmp_path / "runtime_config.json"
+        monkeypatch.setattr(config_manager, "_CONFIG_FILE", config_file, raising=False)
+
+        with patch('core.database.audit_log', MagicMock(side_effect=RuntimeError("audit-fail"))), patch(
+            'core.runtime_reset_signal.emit_runtime_reset_signal',
+            MagicMock()
+        ):
+            success, _ = config_manager.set_config('CPU_THRESHOLD', '61', 1, 'tester')
+
+        assert success is True
+
+    def test_set_config_crit_below_warn_rejected(self, tmp_path, monkeypatch):
+        from services import config_manager
+        config_file = tmp_path / 'runtime_config.json'
+        monkeypatch.setattr(config_manager, '_CONFIG_FILE', config_file)
+        config_file.write_text(json.dumps({'TOP_BW_ALERT_WARN_MBPS': 80}), encoding='utf-8')
+
+        with patch('core.database.audit_log', MagicMock()):
+            success, msg = config_manager.set_config('TOP_BW_ALERT_CRIT_MBPS', '70', 1, 'tester')
+        assert success is False
+        assert 'CRIT' in msg and 'WARN' in msg
+
+    def test_reset_config_invalid_key(self):
+        from services import config_manager
+
+        success, msg = config_manager.reset_config("MISSING_KEY")
+
+        assert success is False
+        assert "tidak ditemukan" in msg
+
+    def test_reset_config_ignores_runtime_reset_and_audit_failures(self, tmp_path, monkeypatch):
+        from services import config_manager
+        config_file = tmp_path / 'runtime_config.json'
+        monkeypatch.setattr(config_manager, '_CONFIG_FILE', config_file)
+        config_file.write_text(json.dumps({'CPU_THRESHOLD': 95}), encoding='utf-8')
+
+        with patch('core.database.audit_log', MagicMock(side_effect=RuntimeError("audit-fail"))), patch(
+            'core.runtime_reset_signal.emit_runtime_reset_signal',
+            MagicMock(side_effect=RuntimeError("signal-fail"))
+        ):
+            success, msg = config_manager.reset_config('CPU_THRESHOLD', 1, 'tester')
+
+        assert success is True
+        assert 'di-reset' in msg
+
+    def test_get_configurable_keys_returns_known_key(self):
+        from services import config_manager
+
+        keys = config_manager.get_configurable_keys()
+
+        assert "CPU_THRESHOLD" in keys
+
