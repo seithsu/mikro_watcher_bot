@@ -25,6 +25,7 @@ def _state_snapshot():
         'ram': bool(_last_alerts.get('ram', False)),
         'disk': bool(_last_alerts.get('disk', False)),
         'firmware_checked': bool(_last_alerts.get('firmware_checked', False)),
+        'firmware_last_check': int(_last_alerts.get('firmware_last_check', 0) or 0),
         'iface_down': tuple(sorted(_last_alerts.get('iface_down', set()))),
         'vpn_down': tuple(sorted(_last_alerts.get('vpn_down', set()))),
         '_initialized': bool(_last_alerts.get('_initialized', False)),
@@ -44,6 +45,7 @@ def _load_state():
                 'ram': saved.get('ram', False),
                 'disk': saved.get('disk', False),
                 'firmware_checked': saved.get('firmware_checked', False),
+                'firmware_last_check': int(saved.get('firmware_last_check', 0) or 0),
                 'iface_down': set(saved.get('iface_down', [])),
                 'vpn_down': set(saved.get('vpn_down', [])),
                 '_initialized': saved.get('_initialized', False),
@@ -53,6 +55,7 @@ def _load_state():
         logger.debug("_load_state error: %s", e)
     return {
         'cpu': False, 'ram': False, 'disk': False, 'firmware_checked': False,
+        'firmware_last_check': 0,
         'iface_down': set(), 'vpn_down': set(), '_initialized': False,
         'uptime_baseline': 0,
     }
@@ -66,6 +69,7 @@ def _save_state():
             'ram': _last_alerts.get('ram', False),
             'disk': _last_alerts.get('disk', False),
             'firmware_checked': _last_alerts.get('firmware_checked', False),
+            'firmware_last_check': int(_last_alerts.get('firmware_last_check', 0) or 0),
             'iface_down': list(_last_alerts.get('iface_down', set())),
             'vpn_down': list(_last_alerts.get('vpn_down', set())),
             '_initialized': _last_alerts.get('_initialized', False),
@@ -91,25 +95,28 @@ def _save_state_if_changed(before_state):
 _last_alerts = _load_state()
 
 _last_uptime_seconds = None
-_firmware_last_check = 0
+_firmware_last_check = float(_last_alerts.get('firmware_last_check', 0) or 0)
 
 
 def clear_runtime_state():
     """Reset state checks in-memory setelah reset runtime bersama."""
     global _last_uptime_seconds, _firmware_last_check
+    persisted_firmware_checked = bool(_last_alerts.get('firmware_checked', False))
+    persisted_firmware_last_check = int(_last_alerts.get('firmware_last_check', 0) or 0)
     _last_alerts.clear()
     _last_alerts.update({
         'cpu': False,
         'ram': False,
         'disk': False,
-        'firmware_checked': False,
+        'firmware_checked': persisted_firmware_checked,
+        'firmware_last_check': persisted_firmware_last_check,
         'iface_down': set(),
         'vpn_down': set(),
         '_initialized': False,
         'uptime_baseline': 0,
     })
     _last_uptime_seconds = None
-    _firmware_last_check = 0
+    _firmware_last_check = float(persisted_firmware_last_check)
 
 
 async def cek_cpu_ram(info):
@@ -219,6 +226,7 @@ async def cek_firmware():
     if now - _firmware_last_check < 86400:
         return
     _firmware_last_check = now
+    _last_alerts['firmware_last_check'] = int(_firmware_last_check)
 
     try:
         rb = await asyncio.to_thread(get_system_routerboard)
@@ -277,14 +285,17 @@ async def cek_uptime_anomaly(info):
         _save_state_if_changed(state_before)
 
         if restart_detected:
-            await kirim_ke_semua_admin(
+            delivered = await kirim_ke_semua_admin(
                 f"[WARN] <b>Router Restart Terdeteksi!</b>\n\n"
                 f"Uptime baru: <b>{uptime_str}</b>\n\n"
                 f"Router ter-restart tanpa perintah dari bot.\n"
                 f"Kemungkinan: power cycle, crash, atau restart manual.",
                 parse_mode='HTML'
             )
-            logger.info(f"[SENT] Uptime anomaly detected: {uptime_str}")
+            if delivered:
+                logger.info(f"[SENT] Uptime anomaly detected: {uptime_str}")
+            else:
+                logger.info(f"[SKIP] Uptime anomaly detected but delivery blocked/suppressed: {uptime_str}")
     except Exception as e:
         logger.debug(f"cek_uptime_anomaly error: {e}")
 

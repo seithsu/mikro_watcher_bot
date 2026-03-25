@@ -171,6 +171,7 @@ def test_main_initializes_and_runs_with_alert_gate(monkeypatch):
     monkeypatch.setattr(mon, "configure_root_logging", configure)
     monkeypatch.setattr(mon, "install_global_exception_hooks", hooks)
     monkeypatch.setattr(mon.asyncio, "run", _fake_run)
+    monkeypatch.setattr("monitor.alerts.get_alert_delivery_state", MagicMock(return_value={"enabled": False, "exists": False}))
     monkeypatch.setattr("monitor.alerts.set_alert_delivery_enabled", gate)
 
     mon.main()
@@ -179,6 +180,31 @@ def test_main_initializes_and_runs_with_alert_gate(monkeypatch):
     hooks.assert_called_once_with(process_name="monitor")
     gate.assert_called_once_with(False, actor="monitor_boot", reason="require_start")
     assert captured["called"] == 1
+
+
+def test_main_preserves_existing_enabled_alert_gate(monkeypatch):
+    monkeypatch.setattr(mon.cfg, "ALERT_REQUIRE_START", True, raising=False)
+    monkeypatch.setattr(mon.cfg, "MIKROTIK_USE_SSL", False, raising=False)
+    monkeypatch.setattr(mon.cfg, "MIKROTIK_TLS_VERIFY", True, raising=False)
+    monkeypatch.setattr(mon.cfg, "MONITOR_INTERVAL", 300, raising=False)
+    monkeypatch.setattr(mon.cfg, "RESOURCE_MONITOR_INTERVAL", 60, raising=False)
+    monkeypatch.setattr(mon.cfg, "MONITOR_LOG_INTERVAL", 30, raising=False)
+    monkeypatch.setattr(mon.cfg, "TOP_BW_ALERT_INTERVAL", 15, raising=False)
+    monkeypatch.setattr(mon.cfg, "ADMIN_IDS", [123456], raising=False)
+    monkeypatch.setattr(mon, "configure_root_logging", MagicMock())
+    monkeypatch.setattr(mon, "install_global_exception_hooks", MagicMock())
+    monkeypatch.setattr(mon.asyncio, "run", lambda coro: coro.close())
+
+    monkeypatch.setattr(
+        "monitor.alerts.get_alert_delivery_state",
+        MagicMock(return_value={"enabled": True, "exists": True}),
+    )
+    gate = MagicMock()
+    monkeypatch.setattr("monitor.alerts.set_alert_delivery_enabled", gate)
+
+    mon.main()
+
+    gate.assert_not_called()
 
 
 def test_main_handles_keyboard_interrupt(monkeypatch):

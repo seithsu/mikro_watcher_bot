@@ -123,6 +123,7 @@ class TestAlertGate:
         from monitor import alerts
         monkeypatch.setattr(alerts, "ALERT_REQUIRE_START", False, raising=False)
         assert alerts.is_alert_delivery_enabled() is True
+        assert alerts.get_alert_delivery_state() == {"enabled": True, "exists": False}
 
     def test_gate_default_disabled_when_required(self, monkeypatch):
         from monitor import alerts
@@ -195,8 +196,9 @@ class TestAlertGate:
         monkeypatch.setattr(alerts, "_ALERT_GATE_FILE", tmp_path / "alert_gate.json", raising=False)
         alerts.set_alert_delivery_enabled(False, actor="test", reason="unit")
         mock_bot.send_message = AsyncMock()
-        await alerts.kirim_ke_semua_admin("test msg")
+        delivered = await alerts.kirim_ke_semua_admin("test msg")
         mock_bot.send_message.assert_not_called()
+        assert delivered is False
 
 
 class TestAcknowledge:

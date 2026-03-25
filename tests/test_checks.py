@@ -152,6 +152,7 @@ class TestFirmwareAndState:
                 "ram": False,
                 "disk": True,
                 "firmware_checked": True,
+                "firmware_last_check": 123456,
                 "iface_down": {"ether2"},
                 "vpn_down": {"vpn1"},
                 "_initialized": True,
@@ -163,6 +164,7 @@ class TestFirmwareAndState:
         assert loaded["cpu"] is True
         assert loaded["iface_down"] == {"ether2"}
         assert loaded["vpn_down"] == {"vpn1"}
+        assert loaded["firmware_last_check"] == 123456
 
         state_file.write_text("{bad json", encoding="utf-8")
         loaded = checks._load_state()
@@ -192,9 +194,11 @@ class TestFirmwareAndState:
         from monitor.checks import cek_firmware
 
         monitor.checks._firmware_last_check = 0
+        monitor.checks._last_alerts["firmware_last_check"] = 0
         monitor.checks._last_alerts["firmware_checked"] = False
         await cek_firmware()
         assert monitor.checks._last_alerts["firmware_checked"] is True
+        assert monitor.checks._last_alerts["firmware_last_check"] > 0
         mock_send.assert_awaited_once()
 
         await cek_firmware()
@@ -208,14 +212,29 @@ class TestFirmwareAndState:
         from monitor.checks import cek_firmware
 
         monitor.checks._firmware_last_check = 0
+        monitor.checks._last_alerts["firmware_last_check"] = 0
         monitor.checks._last_alerts["firmware_checked"] = True
         await cek_firmware()
         assert monitor.checks._last_alerts["firmware_checked"] is False
         mock_send.assert_not_called()
 
         monitor.checks._firmware_last_check = 0
+        monitor.checks._last_alerts["firmware_last_check"] = 0
         with patch("monitor.checks.get_system_routerboard", side_effect=RuntimeError("rb-fail")):
             await cek_firmware()
+
+    def test_clear_runtime_state_preserves_firmware_throttle(self):
+        import monitor.checks as checks
+
+        checks._last_alerts["firmware_checked"] = True
+        checks._last_alerts["firmware_last_check"] = 777
+        checks._firmware_last_check = 777
+
+        checks.clear_runtime_state()
+
+        assert checks._last_alerts["firmware_checked"] is True
+        assert checks._last_alerts["firmware_last_check"] == 777
+        assert checks._firmware_last_check == 777
 
 
 class TestCekUptimeAnomaly:
@@ -252,10 +271,23 @@ class TestCekUptimeAnomaly:
         monitor.checks._last_uptime_seconds = 86400  # 1 day
 
         from monitor.checks import cek_uptime_anomaly
+        mock_send.return_value = True
         info = {'uptime': '2m30s'}  # 150s < 600s threshold
         await cek_uptime_anomaly(info)
         mock_send.assert_called()
         assert 'Restart' in mock_send.call_args[0][0]
+
+    @pytest.mark.asyncio
+    @patch('monitor.checks.kirim_ke_semua_admin', new_callable=AsyncMock)
+    async def test_restart_detected_but_delivery_blocked(self, mock_send):
+        import monitor.checks
+        monitor.checks._last_uptime_seconds = 86400
+        mock_send.return_value = False
+
+        from monitor.checks import cek_uptime_anomaly
+        await cek_uptime_anomaly({'uptime': '1m'})
+
+        mock_send.assert_called_once()
 
     @pytest.mark.asyncio
     @patch('monitor.checks.kirim_ke_semua_admin', new_callable=AsyncMock)

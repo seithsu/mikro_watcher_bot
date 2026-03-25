@@ -94,9 +94,16 @@ def main():
 
     if getattr(cfg, "ALERT_REQUIRE_START", False):
         try:
-            from .alerts import set_alert_delivery_enabled
-            set_alert_delivery_enabled(False, actor="monitor_boot", reason="require_start")
-            logger.info("Alert gate aktif: notifikasi monitor menunggu perintah /start dari admin.")
+            from .alerts import get_alert_delivery_state, set_alert_delivery_enabled
+            gate_state = get_alert_delivery_state()
+            if gate_state.get("exists"):
+                if gate_state.get("enabled"):
+                    logger.info("Alert gate tetap aktif dari state sebelumnya.")
+                else:
+                    logger.info("Alert gate tetap nonaktif dari state sebelumnya; menunggu /start admin.")
+            else:
+                set_alert_delivery_enabled(False, actor="monitor_boot", reason="require_start")
+                logger.info("Alert gate aktif: notifikasi monitor menunggu perintah /start dari admin.")
         except Exception as e:
             logger.warning("Gagal set alert gate saat startup monitor: %s", e)
 

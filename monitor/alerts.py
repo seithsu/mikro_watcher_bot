@@ -422,6 +422,25 @@ def is_alert_delivery_enabled():
     return False
 
 
+def get_alert_delivery_state():
+    """Ambil state gate alert saat ini, termasuk apakah file state sudah ada."""
+    if not bool(_runtime_value("ALERT_REQUIRE_START", False)):
+        return {"enabled": True, "exists": False}
+    try:
+        with _ipc_lock():
+            raw = _read_json_unlocked(_ALERT_GATE_FILE, {})
+        if isinstance(raw, dict) and raw:
+            return {
+                "enabled": bool(raw.get("enabled", False)),
+                "exists": True,
+                "actor": str(raw.get("actor", "") or ""),
+                "reason": str(raw.get("reason", "") or ""),
+            }
+    except Exception as e:
+        logger.debug("get_alert_delivery_state error: %s", e)
+    return {"enabled": False, "exists": False}
+
+
 def set_alert_delivery_enabled(enabled, actor="system", reason=""):
     """Set gate global alert monitor lintas proses (bot + monitor)."""
     payload = {
@@ -450,11 +469,11 @@ async def kirim_ke_semua_admin(pesan, parse_mode=None, severity=AlertSeverity.WA
     apply_runtime_reset_if_signaled()
     delivery_enabled = await asyncio.to_thread(is_alert_delivery_enabled)
     if not delivery_enabled:
-        return
+        return False
 
     is_muted = await asyncio.to_thread(_check_mute)
     if is_muted:
-        return
+        return False
 
     now = time.time()
 
@@ -470,7 +489,7 @@ async def kirim_ke_semua_admin(pesan, parse_mode=None, severity=AlertSeverity.WA
         )
         if recent_count > digest_threshold:
             logger.info(f"Alert suppressed (digest mode): {pesan[:50]}...")
-            return
+            return False
 
     timestamp_str = datetime.now().strftime("%H:%M:%S")
     prefix = _SEVERITY_PREFIX.get(severity, "")
@@ -497,6 +516,7 @@ async def kirim_ke_semua_admin(pesan, parse_mode=None, severity=AlertSeverity.WA
             ]
         )
 
+    delivered = False
     for admin_id in list(_runtime_value("ADMIN_IDS", []) or []):
         try:
             await bot.send_message(
@@ -505,8 +525,10 @@ async def kirim_ke_semua_admin(pesan, parse_mode=None, severity=AlertSeverity.WA
                 parse_mode=parse_mode or "HTML",
                 reply_markup=reply_markup,
             )
+            delivered = True
         except Exception as e:
             logger.warning(f"Gagal kirim alert ke {admin_id}: {e}")
+    return delivered
 
 
 async def check_escalation():
