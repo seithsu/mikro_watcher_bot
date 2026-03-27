@@ -6,11 +6,13 @@
 import sqlite3
 import json
 import os
+import logging
 from datetime import datetime, timedelta
 from contextlib import contextmanager
 from core.config import DATA_DIR
 
 DB_PATH = str(DATA_DIR / "downtime.db")
+logger = logging.getLogger(__name__)
 
 
 # ============ CONNECTION MANAGER ============
@@ -367,6 +369,16 @@ def cleanup_old_data(days=60):
         return deleted_incidents + deleted_metrics + deleted_audit
 
 
+def _compact_db_file():
+    """Padatkan file SQLite setelah purge besar agar ukuran file ikut turun."""
+    try:
+        with sqlite3.connect(DB_PATH, timeout=30) as conn:
+            conn.execute('PRAGMA wal_checkpoint(TRUNCATE)')
+            conn.execute('VACUUM')
+    except Exception as e:
+        logger.debug("Database compact skipped/failed: %s", e)
+
+
 def reset_all_data():
     """Hapus SEMUA data dari semua tabel (untuk fresh start).
     
@@ -389,12 +401,14 @@ def reset_all_data():
         c.execute("DELETE FROM audit_log")
         
         conn.commit()
-        return {
+        result = {
             'incidents': cnt_incidents,
             'metrics': cnt_metrics,
             'audit_log': cnt_audit,
             'total': cnt_incidents + cnt_metrics + cnt_audit
         }
+    _compact_db_file()
+    return result
 
 
 def get_uptime_stats(days=7):

@@ -434,6 +434,21 @@ def test_reset_all_data_returns_deleted_counts():
     assert database.get_audit_log(10) == []
 
 
+def test_reset_all_data_compacts_database(monkeypatch):
+    calls = []
+
+    def fake_compact():
+        calls.append("compact")
+
+    monkeypatch.setattr(database, "_compact_db_file", fake_compact)
+
+    database.log_incident_down("host1", "DOWN", "snap", "server")
+    result = database.reset_all_data()
+
+    assert result["total"] == 1
+    assert calls == ["compact"]
+
+
 def test_get_uptime_stats_formats_seconds_minutes_and_hours():
     with database._get_conn() as conn:
         c = conn.cursor()
