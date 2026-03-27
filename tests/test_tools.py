@@ -196,3 +196,31 @@ class TestTools:
         assert "192.168.1.11" in result["free_ips"]
         assert "192.168.1.12" not in result["free_ips"]
         assert "192.168.1.13" not in result["free_ips"]
+
+    def test_find_free_ips_marks_simple_queue_target_as_used(self, mock_get_api):
+        from mikrotik.tools import find_free_ips
+
+        mock_api = MagicMock()
+        mock_get_api.return_value = mock_api
+
+        def mock_path(*args):
+            if args == ("ip", "arp"):
+                return iter([])
+            if args == ("ip", "dhcp-server", "lease"):
+                return iter([])
+            if args == ("ip", "address"):
+                return iter([])
+            if args == ("ip", "dns", "static"):
+                return iter([])
+            if args == ("queue", "simple"):
+                return iter([
+                    {"target": "192.168.3.33/32", "disabled": "false"},
+                    {"target": "192.168.3.34/32", "disabled": "true"},
+                ])
+            return iter([])
+
+        mock_api.path.side_effect = mock_path
+
+        result = find_free_ips("192.168.3.32/29")
+        assert "192.168.3.33" not in result["free_ips"]
+        assert "192.168.3.34" in result["free_ips"]

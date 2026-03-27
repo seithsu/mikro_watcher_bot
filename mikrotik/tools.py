@@ -33,6 +33,21 @@ def _is_active_arp_entry(arp):
     return True
 
 
+def _extract_queue_target_ip(queue_item):
+    target = str(queue_item.get('target', '') or '').strip()
+    if not target:
+        return None
+    first_target = target.split(',')[0].strip()
+    ip = first_target.split('/')[0].strip()
+    if not ip:
+        return None
+    try:
+        ipaddress.ip_address(ip)
+    except ValueError:
+        return None
+    return ip
+
+
 @with_retry
 def ping_host(address, count=4):
     """Ping ke host dari router via RouterOS API.
@@ -210,6 +225,25 @@ def find_free_ips(network_with_cidr):
                     pass
     except Exception as e:
         logger.debug("Suppressed non-fatal exception: %s", e)
+
+    # Simple queue targets
+    try:
+        queues = list(api.path('queue', 'simple'))
+        for q in queues:
+            if _truthy(q.get('disabled')):
+                continue
+            ip_str = _extract_queue_target_ip(q)
+            if not ip_str:
+                continue
+            try:
+                ip_obj = ipaddress.ip_address(ip_str)
+                if ip_obj in network:
+                    used_ips.add(ip_str)
+            except ValueError:
+                pass
+    except Exception as e:
+        logger.warning(f"find_free_ips: gagal baca simple queue: {e}")
+
     # Hitung free IPs (skip network & broadcast)
     free_ips = []
     actual_used_count = 0
@@ -227,5 +261,4 @@ def find_free_ips(network_with_cidr):
         'free_count': len(free_ips),
         'free_ips': free_ips
     }
-
 
