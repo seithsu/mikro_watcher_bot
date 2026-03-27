@@ -422,6 +422,21 @@ def test_cleanup_old_data_removes_closed_incidents_metrics_and_old_audit():
     assert all(row["host"] != "old-closed" for row in history)
 
 
+def test_cleanup_old_data_attempts_auto_compact(monkeypatch):
+    calls = []
+
+    def fake_maybe_compact():
+        calls.append("compact")
+        return True
+
+    monkeypatch.setattr(database, "maybe_compact_db_file", fake_maybe_compact)
+
+    deleted = database.cleanup_old_data(days=60)
+
+    assert deleted == 0
+    assert calls == ["compact"]
+
+
 def test_reset_all_data_returns_deleted_counts():
     database.log_incident_down("host1", "DOWN", "snap", "server")
     database.record_metric("cpu_usage", 10)
@@ -446,6 +461,37 @@ def test_reset_all_data_compacts_database(monkeypatch):
     result = database.reset_all_data()
 
     assert result["total"] == 1
+    assert calls == ["compact"]
+
+
+def test_maybe_compact_db_file_skips_below_threshold(monkeypatch):
+    monkeypatch.setattr(database, "get_db_storage_stats", lambda: {
+        "page_size": 4096,
+        "page_count": 100,
+        "freelist_count": 2,
+        "file_bytes": 409600,
+        "free_bytes": 8192,
+        "free_ratio": 0.02,
+    })
+    monkeypatch.setattr(database, "_compact_db_file", lambda: (_ for _ in ()).throw(AssertionError("should not compact")))
+
+    assert database.maybe_compact_db_file() is False
+
+
+def test_maybe_compact_db_file_runs_above_threshold(monkeypatch):
+    calls = []
+
+    monkeypatch.setattr(database, "get_db_storage_stats", lambda: {
+        "page_size": 4096,
+        "page_count": 10000,
+        "freelist_count": 4000,
+        "file_bytes": 40960000,
+        "free_bytes": 16384000,
+        "free_ratio": 0.4,
+    })
+    monkeypatch.setattr(database, "_compact_db_file", lambda: calls.append("compact"))
+
+    assert database.maybe_compact_db_file(min_free_bytes=1024, min_free_ratio=0.1) is True
     assert calls == ["compact"]
 
 

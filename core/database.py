@@ -13,6 +13,8 @@ from core.config import DATA_DIR
 
 DB_PATH = str(DATA_DIR / "downtime.db")
 logger = logging.getLogger(__name__)
+_AUTO_COMPACT_MIN_FREE_BYTES = 32 * 1024 * 1024
+_AUTO_COMPACT_MIN_FREE_RATIO = 0.25
 
 
 # ============ CONNECTION MANAGER ============
@@ -366,17 +368,69 @@ def cleanup_old_data(days=60):
         deleted_audit = c.rowcount
         
         conn.commit()
-        return deleted_incidents + deleted_metrics + deleted_audit
+        total_deleted = deleted_incidents + deleted_metrics + deleted_audit
+    maybe_compact_db_file()
+    return total_deleted
 
 
 def _compact_db_file():
     """Padatkan file SQLite setelah purge besar agar ukuran file ikut turun."""
     try:
+        size_before = os.path.getsize(DB_PATH) if os.path.exists(DB_PATH) else 0
         with sqlite3.connect(DB_PATH, timeout=30) as conn:
             conn.execute('PRAGMA wal_checkpoint(TRUNCATE)')
             conn.execute('VACUUM')
+        size_after = os.path.getsize(DB_PATH) if os.path.exists(DB_PATH) else 0
+        logger.info(
+            "[DB] SQLite compact selesai: %s -> %s byte",
+            size_before,
+            size_after,
+        )
     except Exception as e:
         logger.debug("Database compact skipped/failed: %s", e)
+
+
+def get_db_storage_stats():
+    """Ambil statistik storage SQLite untuk memutuskan kapan perlu VACUUM."""
+    with sqlite3.connect(DB_PATH, timeout=10) as conn:
+        page_size = int(conn.execute('PRAGMA page_size').fetchone()[0] or 0)
+        page_count = int(conn.execute('PRAGMA page_count').fetchone()[0] or 0)
+        freelist_count = int(conn.execute('PRAGMA freelist_count').fetchone()[0] or 0)
+    file_bytes = page_size * page_count
+    free_bytes = page_size * freelist_count
+    return {
+        'page_size': page_size,
+        'page_count': page_count,
+        'freelist_count': freelist_count,
+        'file_bytes': file_bytes,
+        'free_bytes': free_bytes,
+        'free_ratio': (free_bytes / file_bytes) if file_bytes > 0 else 0.0,
+    }
+
+
+def maybe_compact_db_file(min_free_bytes=_AUTO_COMPACT_MIN_FREE_BYTES, min_free_ratio=_AUTO_COMPACT_MIN_FREE_RATIO):
+    """VACUUM otomatis hanya jika ruang kosong internal SQLite sudah signifikan."""
+    try:
+        stats = get_db_storage_stats()
+    except Exception as e:
+        logger.debug("DB storage stats skipped/failed: %s", e)
+        return False
+
+    if stats['freelist_count'] <= 0:
+        return False
+    if stats['free_bytes'] < int(min_free_bytes):
+        return False
+    if stats['free_ratio'] < float(min_free_ratio):
+        return False
+
+    logger.info(
+        "[DB] Auto-compact dipicu: free=%s byte (%.1f%%) dari file %s byte",
+        stats['free_bytes'],
+        stats['free_ratio'] * 100.0,
+        stats['file_bytes'],
+    )
+    _compact_db_file()
+    return True
 
 
 def reset_all_data():
