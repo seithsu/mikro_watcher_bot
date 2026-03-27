@@ -7,6 +7,7 @@ import ipaddress
 
 from .connection import pool
 from .decorators import with_retry, to_int
+import core.config as cfg
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +47,29 @@ def _extract_queue_target_ip(queue_item):
     except ValueError:
         return None
     return ip
+
+
+def _add_used_ip_if_in_network(used_ips, network, ip_str):
+    ip_text = str(ip_str or '').strip()
+    if not ip_text:
+        return
+    try:
+        ip_obj = ipaddress.ip_address(ip_text)
+        if ip_obj in network:
+            used_ips.add(ip_text)
+    except ValueError:
+        return
+
+
+def _iter_reserved_inventory_ips():
+    """IP inventaris statis yang harus tetap dianggap reserved walau device sedang mati."""
+    for mapping in (
+        getattr(cfg, 'SERVERS_FALLBACK', {}) or {},
+        getattr(cfg, 'APS_FALLBACK', {}) or {},
+        getattr(cfg, 'CRITICAL_DEVICES_FALLBACK', {}) or {},
+    ):
+        for ip in mapping.values():
+            yield ip
 
 
 @with_retry
@@ -202,12 +226,7 @@ def find_free_ips(network_with_cidr):
             ip_str = addr.get('address', '')
             if '/' in ip_str:
                 ip_str = ip_str.split('/')[0]
-            try:
-                ip_obj = ipaddress.ip_address(ip_str)
-                if ip_obj in network:
-                    used_ips.add(ip_str)
-            except ValueError:
-                pass
+            _add_used_ip_if_in_network(used_ips, network, ip_str)
     except Exception as e:
         logger.warning(f"find_free_ips: gagal baca IP address: {e}")
 
@@ -216,13 +235,7 @@ def find_free_ips(network_with_cidr):
         dns_entries = list(api.path('ip', 'dns', 'static'))
         for d in dns_entries:
             ip_str = d.get('address', '')
-            if ip_str:
-                try:
-                    ip_obj = ipaddress.ip_address(ip_str)
-                    if ip_obj in network:
-                        used_ips.add(ip_str)
-                except ValueError:
-                    pass
+            _add_used_ip_if_in_network(used_ips, network, ip_str)
     except Exception as e:
         logger.debug("Suppressed non-fatal exception: %s", e)
 
@@ -233,16 +246,13 @@ def find_free_ips(network_with_cidr):
             if _truthy(q.get('disabled')):
                 continue
             ip_str = _extract_queue_target_ip(q)
-            if not ip_str:
-                continue
-            try:
-                ip_obj = ipaddress.ip_address(ip_str)
-                if ip_obj in network:
-                    used_ips.add(ip_str)
-            except ValueError:
-                pass
+            _add_used_ip_if_in_network(used_ips, network, ip_str)
     except Exception as e:
         logger.warning(f"find_free_ips: gagal baca simple queue: {e}")
+
+    # Inventaris statis known device dari config bot.
+    for ip_str in _iter_reserved_inventory_ips():
+        _add_used_ip_if_in_network(used_ips, network, ip_str)
 
     # Hitung free IPs (skip network & broadcast)
     free_ips = []
@@ -261,4 +271,3 @@ def find_free_ips(network_with_cidr):
         'free_count': len(free_ips),
         'free_ips': free_ips
     }
-

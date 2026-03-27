@@ -224,3 +224,22 @@ class TestTools:
         result = find_free_ips("192.168.3.32/29")
         assert "192.168.3.33" not in result["free_ips"]
         assert "192.168.3.34" in result["free_ips"]
+
+    def test_find_free_ips_marks_inventory_fallback_ips_as_used(self, mock_get_api, monkeypatch):
+        from mikrotik.tools import find_free_ips
+
+        mock_api = MagicMock()
+        mock_get_api.return_value = mock_api
+
+        def mock_path(*args):
+            return iter([])
+
+        mock_api.path.side_effect = mock_path
+        monkeypatch.setattr("mikrotik.tools.cfg.SERVERS_FALLBACK", {"Server Mati": "192.168.3.33"})
+        monkeypatch.setattr("mikrotik.tools.cfg.APS_FALLBACK", {"AP Mati": "192.168.3.34"})
+        monkeypatch.setattr("mikrotik.tools.cfg.CRITICAL_DEVICES_FALLBACK", {"Critical Mati": "192.168.3.35"})
+
+        result = find_free_ips("192.168.3.32/29")
+        assert "192.168.3.33" not in result["free_ips"]
+        assert "192.168.3.34" not in result["free_ips"]
+        assert "192.168.3.35" not in result["free_ips"]
