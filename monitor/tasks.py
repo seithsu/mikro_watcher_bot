@@ -368,6 +368,19 @@ def _is_queue_change_log(topics, message_text):
     return any(token in topics_l for token in ("system", "account", "info"))
 
 
+def _is_dhcp_pool_exhausted_log(topics, message_text):
+    """Deteksi log DHCP pool habis yang lebih baik ditangani monitor stateful."""
+    topics_l = str(topics or "").lower()
+    msg_l = str(message_text or "").lower()
+    if "dhcp" not in topics_l or "error" not in topics_l:
+        return False
+    if "failed to give out ip address" not in msg_l:
+        return False
+    if "pool" not in msg_l:
+        return False
+    return ("is empty" in msg_l) or ("no more addresses" in msg_l)
+
+
 def _get_autoblock_trusted_ips():
     """Set IP trusted yang tidak boleh pernah di-auto-block."""
     trusted = {"127.0.0.1", "0.0.0.0"}
@@ -1084,9 +1097,10 @@ async def task_monitor_logs():
                     # Deteksi event power/UPS/voltage
                     is_power_event = any(kw in msg for kw in ['power', 'voltage', 'ups', 'poe'])
                     is_queue_change = _is_queue_change_log(topics, msg_text)
+                    is_dhcp_pool_exhausted = _is_dhcp_pool_exhausted_log(topics, msg_text)
 
                     # Filter topik penting untuk alert log standar
-                    if topic_tokens.intersection({'error', 'critical', 'warning', 'account'}) or is_queue_change:
+                    if (topic_tokens.intersection({'error', 'critical', 'warning', 'account'}) or is_queue_change) and not is_dhcp_pool_exhausted:
                         if not is_bot_ip:
                             new_logs.append(l)
                             if is_power_event:
@@ -1164,6 +1178,10 @@ async def task_monitor_dhcp_arp():
 
                 elif pct < cfg.DHCP_ALERT_THRESHOLD - 10 and alerted_dhcp:
                     alerted_dhcp = False
+                    msg = (f"✅ <b>[DHCP POOL RECOVERY]</b>\n\n"
+                           f"Kapasitas DHCP sudah kembali aman.\n"
+                           f"Terpakai: {bound}/{cfg.DHCP_POOL_SIZE} ({pct:.0f}%)")
+                    await kirim_ke_semua_admin(msg, parse_mode='HTML', severity=AlertSeverity.INFO)
 
             # 2. IP Conflict (MAC Anomaly) Monitor
             if cfg.CRITICAL_MACS:

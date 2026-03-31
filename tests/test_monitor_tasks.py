@@ -299,6 +299,24 @@ class TestQueueChangeLogDetection:
         ) is False
 
 
+class TestDhcpPoolLogDetection:
+    def test_dhcp_pool_exhausted_log_detected(self):
+        from monitor.tasks import _is_dhcp_pool_exhausted_log
+
+        assert _is_dhcp_pool_exhausted_log(
+            "dhcp,error",
+            "DHCP SERVER: failed to give out IP address: pool <dhcp_pool0> is empty",
+        ) is True
+
+    def test_dhcp_pool_exhausted_log_ignored_for_other_errors(self):
+        from monitor.tasks import _is_dhcp_pool_exhausted_log
+
+        assert _is_dhcp_pool_exhausted_log(
+            "system,error",
+            "disk error",
+        ) is False
+
+
 class TestShieldTrustedIps:
     def test_extract_login_failure_ip_valid(self):
         from monitor.tasks import _extract_login_failure_ip
@@ -1425,6 +1443,45 @@ class TestMonitorTaskLoops:
         assert send.await_count >= 2  # DHCP warning + IP conflict
 
     @pytest.mark.asyncio
+    async def test_task_monitor_dhcp_arp_sends_recovery(self, monkeypatch):
+        import monitor.tasks as t
+
+        monkeypatch.setattr(t, "_pause_if_api_unavailable", AsyncMock(return_value=False))
+        monkeypatch.setattr(t.cfg, "reload_runtime_overrides", lambda min_interval=10: None, raising=False)
+        monkeypatch.setattr(t.cfg, "reload_router_env", lambda min_interval=10: None, raising=False)
+        monkeypatch.setattr(t.cfg, "DHCP_POOL_SIZE", 60, raising=False)
+        monkeypatch.setattr(t.cfg, "DHCP_ALERT_THRESHOLD", 80, raising=False)
+        monkeypatch.setattr(t.cfg, "CRITICAL_MACS", {}, raising=False)
+
+        readings = iter([55, 30])
+
+        async def fake_get_usage():
+            return next(readings)
+
+        monkeypatch.setattr(t, "_get_dhcp_usage_snapshot", fake_get_usage)
+
+        send = AsyncMock()
+        monkeypatch.setattr(t, "kirim_ke_semua_admin", send)
+        monkeypatch.setattr(t.database, "record_metric", MagicMock())
+
+        sleep_calls = {"n": 0}
+
+        async def stop_after_second_loop(_seconds):
+            sleep_calls["n"] += 1
+            if sleep_calls["n"] >= 2:
+                raise asyncio.CancelledError()
+
+        monkeypatch.setattr(t.asyncio, "sleep", stop_after_second_loop)
+        monkeypatch.setattr(t, "with_timeout", AsyncMock(return_value=[]))
+
+        with pytest.raises(asyncio.CancelledError):
+            await t.task_monitor_dhcp_arp()
+
+        messages = [call.args[0] for call in send.await_args_list]
+        assert any("DHCP POOL WARNING" in msg for msg in messages)
+        assert any("DHCP POOL RECOVERY" in msg for msg in messages)
+
+    @pytest.mark.asyncio
     async def test_task_monitor_logs_forwards_critical_log(self, monkeypatch):
         import monitor.tasks as t
 
@@ -1537,6 +1594,55 @@ class TestMonitorTaskLoops:
             "time": "10:00:01",
             "topics": "system,info",
             "message": "simple queue removed",
+        }]
+        calls = {"n": 0}
+
+        def fake_get_log(_lines):
+            calls["n"] += 1
+            return logs_baseline if calls["n"] == 1 else logs_tick
+
+        monkeypatch.setattr(t, "get_mikrotik_log", fake_get_log)
+
+        bot_mock = MagicMock()
+        bot_mock.send_message = AsyncMock()
+        monkeypatch.setattr(t, "bot", bot_mock)
+
+        async def fake_with_timeout(coro, timeout=15, default=None, **kwargs):
+            try:
+                return await coro if asyncio.iscoroutine(coro) else coro
+            except Exception:
+                return default
+
+        async def stop_sleep(_seconds):
+            raise asyncio.CancelledError()
+
+        monkeypatch.setattr(t, "with_timeout", fake_with_timeout)
+        monkeypatch.setattr(t.asyncio, "sleep", stop_sleep)
+
+        with pytest.raises(asyncio.CancelledError):
+            await t.task_monitor_logs()
+
+        bot_mock.send_message.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_task_monitor_logs_skips_dhcp_pool_exhausted_spam(self, monkeypatch):
+        import monitor.tasks as t
+
+        monkeypatch.setattr(t, "_pause_if_api_unavailable", AsyncMock(return_value=False))
+        monkeypatch.setattr(t.cfg, "reload_runtime_overrides", lambda min_interval=10: None, raising=False)
+        monkeypatch.setattr(t.cfg, "reload_router_env", lambda min_interval=10: None, raising=False)
+        monkeypatch.setattr(t.cfg, "MONITOR_LOG_INTERVAL", 1, raising=False)
+        monkeypatch.setattr(t.cfg, "MONITOR_LOG_FETCH_LINES", 50, raising=False)
+        monkeypatch.setattr(t.cfg, "ADMIN_IDS", [111], raising=False)
+        monkeypatch.setattr(t.cfg, "BOT_IP", "", raising=False)
+        monkeypatch.setattr(t.cfg, "MIKROTIK_USER", "admin", raising=False)
+        monkeypatch.setattr(t.cfg, "API_ACCOUNT_SKIP_USERS", ["admin"], raising=False)
+
+        logs_baseline = [{"time": "10:00:00", "topics": "system,info", "message": "boot"}]
+        logs_tick = [{
+            "time": "10:00:01",
+            "topics": "dhcp,error",
+            "message": "DHCP SERVER: failed to give out IP address: pool <dhcp_pool0> is empty",
         }]
         calls = {"n": 0}
 
