@@ -33,6 +33,52 @@ class TestNetwork:
         assert len(result) == 1
         assert result[0]['address'] == '192.168.1.1/24'
 
+    def test_get_dhcp_pool_capacity_from_enabled_servers(self, mock_get_api):
+        from mikrotik.network import get_dhcp_pool_capacity
+
+        mock_api = MagicMock()
+        mock_get_api.return_value = mock_api
+
+        def mock_path(*args):
+            if args == ("ip", "dhcp-server"):
+                return iter([
+                    {"name": "DHCP1", "address-pool": "pool-a", "disabled": "false"},
+                    {"name": "DHCP2", "address-pool": "pool-b", "disabled": "true"},
+                ])
+            if args == ("ip", "pool"):
+                return iter([
+                    {"name": "pool-a", "ranges": "192.168.3.190-192.168.3.249"},
+                    {"name": "pool-b", "ranges": "192.168.4.10-192.168.4.19"},
+                ])
+            return iter([])
+
+        mock_api.path.side_effect = mock_path
+
+        assert get_dhcp_pool_capacity.__wrapped__.__wrapped__() == 60
+
+    def test_get_dhcp_pool_capacity_counts_next_pool_once(self, mock_get_api):
+        from mikrotik.network import get_dhcp_pool_capacity
+
+        mock_api = MagicMock()
+        mock_get_api.return_value = mock_api
+
+        def mock_path(*args):
+            if args == ("ip", "dhcp-server"):
+                return iter([
+                    {"name": "DHCP1", "address-pool": "pool-a", "disabled": "false"},
+                    {"name": "DHCP2", "address-pool": "pool-b", "disabled": "false"},
+                ])
+            if args == ("ip", "pool"):
+                return iter([
+                    {"name": "pool-a", "ranges": "192.168.3.190-192.168.3.199", "next-pool": "pool-b"},
+                    {"name": "pool-b", "ranges": "192.168.3.200-192.168.3.209"},
+                ])
+            return iter([])
+
+        mock_api.path.side_effect = mock_path
+
+        assert get_dhcp_pool_capacity.__wrapped__.__wrapped__() == 20
+
     def test_get_traffic(self, mock_get_api):
         from mikrotik.network import get_traffic
 

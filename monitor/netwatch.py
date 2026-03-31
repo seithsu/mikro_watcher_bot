@@ -15,7 +15,7 @@ import math
 import random
 
 from mikrotik import (
-    get_status, get_interfaces, get_dhcp_usage_count,
+    get_status, get_interfaces, get_dhcp_usage_count, get_dhcp_pool_capacity,
     get_monitored_aps, get_monitored_servers, get_monitored_critical_devices, get_default_gateway,
     ping_host
 )
@@ -428,7 +428,8 @@ def _build_snapshot_now():
         ram_free_mb = free / (1024*1024) if total > 0 else 0
 
         dhcp_count = get_dhcp_usage_count()
-        pool_pct = (dhcp_count / config.DHCP_POOL_SIZE) * 100 if config.DHCP_POOL_SIZE > 0 else 0
+        dhcp_pool_size = int(get_dhcp_pool_capacity() or config.DHCP_POOL_SIZE or 0)
+        pool_pct = (dhcp_count / dhcp_pool_size) * 100 if dhcp_pool_size > 0 else 0
 
         inet_err = "0/0"
         loc_err = "0/0"

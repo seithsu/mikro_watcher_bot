@@ -19,8 +19,9 @@ class TestDailyReport:
     @patch('handlers.jobs.get_monitored_aps', return_value={})
     @patch('handlers.jobs.get_interfaces', return_value=[])
     @patch('handlers.jobs.get_dhcp_usage_count', return_value=10)
+    @patch('handlers.jobs.get_dhcp_pool_capacity', return_value=80)
     @patch('handlers.jobs.get_status')
-    async def test_daily_report_runs(self, mock_status, mock_dhcp, mock_ifaces,
+    async def test_daily_report_runs(self, mock_status, mock_pool, mock_dhcp, mock_ifaces,
                                       mock_aps, mock_critical, mock_servers, mock_gw, mock_state, mock_db):
         from handlers.jobs import daily_report
 
@@ -37,6 +38,8 @@ class TestDailyReport:
 
         await daily_report(context)
         context.bot.send_message.assert_called()
+        sent_text = context.bot.send_message.await_args.kwargs["text"]
+        assert "DHCP Pool: 10/80" in sent_text
 
     @pytest.mark.asyncio
     @patch('handlers.jobs.logger')
@@ -49,10 +52,12 @@ class TestDailyReport:
     @patch('handlers.jobs.get_monitored_aps', return_value={})
     @patch('handlers.jobs.get_interfaces', return_value=[])
     @patch('handlers.jobs.get_dhcp_usage_count', side_effect=Exception("dhcp-fail"))
+    @patch('handlers.jobs.get_dhcp_pool_capacity', side_effect=Exception("pool-fail"))
     @patch('handlers.jobs.get_status')
     async def test_daily_report_handles_fallbacks_and_send_failure(
         self,
         mock_status,
+        mock_pool,
         mock_dhcp,
         mock_ifaces,
         mock_aps,

@@ -13,7 +13,7 @@ from telegram.ext import ContextTypes
 
 import core.config as cfg
 from mikrotik import (
-    get_status, get_interfaces, get_dhcp_usage_count,
+    get_status, get_interfaces, get_dhcp_usage_count, get_dhcp_pool_capacity,
     get_monitored_aps, get_monitored_servers, get_monitored_critical_devices, get_active_critical_device_names,
     get_default_gateway,
     export_router_backup, export_router_backup_ftp,
@@ -47,8 +47,10 @@ async def daily_report(context: ContextTypes.DEFAULT_TYPE):
         # Hitung DHCP
         try:
             dhcp_count = await asyncio.to_thread(get_dhcp_usage_count)
+            dhcp_pool_size = await asyncio.to_thread(get_dhcp_pool_capacity)
         except Exception:
             dhcp_count = 0
+            dhcp_pool_size = 0
 
         # Cek interface down
         try:
@@ -82,7 +84,8 @@ async def daily_report(context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             today_incidents = 0
 
-        pool_pct = (dhcp_count / cfg.DHCP_POOL_SIZE) * 100 if cfg.DHCP_POOL_SIZE > 0 else 0
+        effective_dhcp_pool_size = int(dhcp_pool_size or cfg.DHCP_POOL_SIZE or 0)
+        pool_pct = (dhcp_count / effective_dhcp_pool_size) * 100 if effective_dhcp_pool_size > 0 else 0
 
         # Load state.json via shared utility
         try:
@@ -174,7 +177,7 @@ async def daily_report(context: ContextTypes.DEFAULT_TYPE):
 
         pesan += (
             f"\n<b>\U0001f310 KAPASITAS JARINGAN</b>\n"
-            f"- DHCP Pool: {dhcp_count}/{cfg.DHCP_POOL_SIZE} ({pool_pct:.0f}%)\n"
+            f"- DHCP Pool: {dhcp_count}/{effective_dhcp_pool_size} ({pool_pct:.0f}%)\n"
         )
 
         if down_ifaces:

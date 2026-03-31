@@ -1407,8 +1407,9 @@ class TestMonitorTaskLoops:
         monkeypatch.setattr(t.cfg, "DHCP_POOL_SIZE", 60, raising=False)
         monkeypatch.setattr(t.cfg, "DHCP_ALERT_THRESHOLD", 80, raising=False)
         monkeypatch.setattr(t.cfg, "CRITICAL_MACS", {"192.168.3.10": "aa:bb:cc:dd:ee:ff"}, raising=False)
+        monkeypatch.setattr(t, "_get_dhcp_pool_capacity_snapshot", AsyncMock(return_value=80))
 
-        monkeypatch.setattr(t, "get_dhcp_usage_count", lambda: 55)
+        monkeypatch.setattr(t, "get_dhcp_usage_count", lambda: 70)
         monkeypatch.setattr(
             t,
             "get_arp_anomalies",
@@ -1441,6 +1442,7 @@ class TestMonitorTaskLoops:
             await t.task_monitor_dhcp_arp()
 
         assert send.await_count >= 2  # DHCP warning + IP conflict
+        assert any("70/80" in call.args[0] for call in send.await_args_list)
 
     @pytest.mark.asyncio
     async def test_task_monitor_dhcp_arp_sends_recovery(self, monkeypatch):
@@ -1452,8 +1454,9 @@ class TestMonitorTaskLoops:
         monkeypatch.setattr(t.cfg, "DHCP_POOL_SIZE", 60, raising=False)
         monkeypatch.setattr(t.cfg, "DHCP_ALERT_THRESHOLD", 80, raising=False)
         monkeypatch.setattr(t.cfg, "CRITICAL_MACS", {}, raising=False)
+        monkeypatch.setattr(t, "_get_dhcp_pool_capacity_snapshot", AsyncMock(return_value=80))
 
-        readings = iter([55, 30])
+        readings = iter([70, 50])
 
         async def fake_get_usage():
             return next(readings)
@@ -1480,6 +1483,8 @@ class TestMonitorTaskLoops:
         messages = [call.args[0] for call in send.await_args_list]
         assert any("DHCP POOL WARNING" in msg for msg in messages)
         assert any("DHCP POOL RECOVERY" in msg for msg in messages)
+        assert any("70/80" in msg for msg in messages)
+        assert any("50/80" in msg for msg in messages)
 
     @pytest.mark.asyncio
     async def test_task_monitor_logs_forwards_critical_log(self, monkeypatch):

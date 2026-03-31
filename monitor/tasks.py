@@ -15,7 +15,7 @@ from telegram import InlineKeyboardMarkup, InlineKeyboardButton
 import core.config as cfg
 from mikrotik import (
     get_status, get_interfaces, get_traffic, get_mikrotik_log,
-    get_dhcp_usage_count, get_arp_anomalies, block_ip, _pool
+    get_dhcp_usage_count, get_dhcp_pool_capacity, get_arp_anomalies, block_ip, _pool
 )
 from .alerts import (
     kirim_ke_semua_admin, with_timeout, bot, check_escalation, send_digest,
@@ -37,6 +37,7 @@ _API_HEAL_ATTEMPT_TS = 0.0
 _INTERFACES_CACHE = {"ts": 0.0, "items": []}
 _INTERFACE_TRAFFIC_CACHE = {"ts": 0.0, "items": {}}
 _DHCP_USAGE_CACHE = {"ts": 0.0, "bound": 0}
+_DHCP_POOL_CAPACITY_CACHE = {"ts": 0.0, "size": 0}
 _ROUTER_LOG_CACHE = {"ts": 0.0, "lines": []}
 _TRAFFIC_QUERY_MIN_CONCURRENCY = 1
 _TRAFFIC_QUERY_MAX_CONCURRENCY = 3
@@ -60,6 +61,8 @@ def clear_runtime_state():
     _INTERFACE_TRAFFIC_CACHE["items"] = {}
     _DHCP_USAGE_CACHE["ts"] = 0.0
     _DHCP_USAGE_CACHE["bound"] = 0
+    _DHCP_POOL_CAPACITY_CACHE["ts"] = 0.0
+    _DHCP_POOL_CAPACITY_CACHE["size"] = 0
     _ROUTER_LOG_CACHE["ts"] = 0.0
     _ROUTER_LOG_CACHE["lines"] = []
     _alerted_hosts_traffic.clear()
@@ -210,6 +213,30 @@ async def _get_dhcp_usage_snapshot(cache_ttl=600):
         logger.debug("[tasks:get_dhcp_usage_count] memakai cache last-good=%s", cached_bound)
         return cached_bound
     return 0
+
+
+async def _get_dhcp_pool_capacity_snapshot(cache_ttl=900):
+    """Ambil ukuran pool DHCP aktual dengan cache last-good dan fallback config."""
+    pool_size = await with_timeout(
+        asyncio.to_thread(get_dhcp_pool_capacity),
+        timeout=10,
+        default=None,
+        log_key="tasks:get_dhcp_pool_capacity",
+        warn_every_sec=900,
+    )
+    now = time.time()
+    if pool_size is not None and int(pool_size or 0) > 0:
+        _DHCP_POOL_CAPACITY_CACHE["size"] = int(pool_size)
+        _DHCP_POOL_CAPACITY_CACHE["ts"] = now
+        return int(pool_size)
+
+    if (now - float(_DHCP_POOL_CAPACITY_CACHE.get("ts", 0.0))) < max(60, int(cache_ttl)):
+        cached_size = int(_DHCP_POOL_CAPACITY_CACHE.get("size", 0) or 0)
+        if cached_size > 0:
+            logger.debug("[tasks:get_dhcp_pool_capacity] memakai cache last-good=%s", cached_size)
+            return cached_size
+
+    return int(getattr(cfg, "DHCP_POOL_SIZE", 0) or 0)
 
 
 async def _get_router_logs_snapshot(fetch_lines, timeout=15, cache_ttl=180):
@@ -1159,9 +1186,10 @@ async def task_monitor_dhcp_arp():
             if await _pause_if_api_unavailable("dhcp_arp", interval):
                 continue
             # 1. DHCP Pool Monitor
-            if cfg.DHCP_POOL_SIZE > 0:
+            pool_size = await _get_dhcp_pool_capacity_snapshot()
+            if pool_size > 0:
                 bound = await _get_dhcp_usage_snapshot()
-                pct = (bound / cfg.DHCP_POOL_SIZE) * 100
+                pct = (bound / pool_size) * 100
 
                 try:
                     await asyncio.to_thread(database.record_metric, 'dhcp_usage_pct', pct)
@@ -1172,7 +1200,7 @@ async def task_monitor_dhcp_arp():
                     alerted_dhcp = True
                     msg = (f"⚠️ <b>[DHCP POOL WARNING]</b>\n\n"
                            f"Kapasitas IP hampir penuh!\n"
-                           f"Terpakai: {bound}/{cfg.DHCP_POOL_SIZE} ({pct:.0f}%)\n"
+                           f"Terpakai: {bound}/{pool_size} ({pct:.0f}%)\n"
                            f"Segera audit manual atau kosongkan lease agar klien baru bisa menyambung.")
                     await kirim_ke_semua_admin(msg, parse_mode='HTML')
 
@@ -1180,7 +1208,7 @@ async def task_monitor_dhcp_arp():
                     alerted_dhcp = False
                     msg = (f"✅ <b>[DHCP POOL RECOVERY]</b>\n\n"
                            f"Kapasitas DHCP sudah kembali aman.\n"
-                           f"Terpakai: {bound}/{cfg.DHCP_POOL_SIZE} ({pct:.0f}%)")
+                           f"Terpakai: {bound}/{pool_size} ({pct:.0f}%)")
                     await kirim_ke_semua_admin(msg, parse_mode='HTML', severity=AlertSeverity.INFO)
 
             # 2. IP Conflict (MAC Anomaly) Monitor

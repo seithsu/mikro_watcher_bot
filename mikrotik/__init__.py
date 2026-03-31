@@ -29,6 +29,7 @@ from .network import (
     get_traffic,
     get_dhcp_leases,
     get_dhcp_usage_count,
+    get_dhcp_pool_capacity,
     get_arp_anomalies,
     get_default_gateway,
     get_mikrotik_log,

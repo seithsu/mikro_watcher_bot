@@ -564,7 +564,7 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         from mikrotik import (
-            get_status, get_interfaces, get_dhcp_usage_count, get_dhcp_leases,
+            get_status, get_interfaces, get_dhcp_usage_count, get_dhcp_pool_capacity, get_dhcp_leases,
             get_monitored_aps, get_monitored_servers, get_monitored_critical_devices,
             get_default_gateway, get_active_critical_device_names
         )
@@ -589,9 +589,11 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         try:
             dhcp_count = await asyncio.to_thread(get_dhcp_usage_count)
+            dhcp_pool_size = await asyncio.to_thread(get_dhcp_pool_capacity)
             leases = await asyncio.to_thread(get_dhcp_leases)
         except Exception:
             dhcp_count = 0
+            dhcp_pool_size = 0
             leases = []
 
         total_ram = int(info['ram_total'])
@@ -627,7 +629,8 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     if last_seen:
                         newest_lease += f" seen {last_seen}"
 
-        pool_pct_dhcp = (dhcp_count / DHCP_POOL_SIZE) * 100 if DHCP_POOL_SIZE > 0 else 0
+        effective_dhcp_pool_size = int(dhcp_pool_size or DHCP_POOL_SIZE or 0)
+        pool_pct_dhcp = (dhcp_count / effective_dhcp_pool_size) * 100 if effective_dhcp_pool_size > 0 else 0
 
         # Waktu
         from datetime import datetime
@@ -727,7 +730,7 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         pesan += (
             f"\n<b>DHCP:</b>\n"
-            f"- Pool: {dhcp_count}/{DHCP_POOL_SIZE} ({pool_pct_dhcp:.0f}%)\n"
+            f"- Pool: {dhcp_count}/{effective_dhcp_pool_size} ({pool_pct_dhcp:.0f}%)\n"
             f"- Lease newest: {newest_lease}\n\n"
         )
         

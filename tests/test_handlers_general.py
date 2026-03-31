@@ -654,6 +654,7 @@ class TestCmdStatus:
         monkeypatch.setattr('mikrotik.get_active_critical_device_names', lambda: ['KOMP POLI'])
         monkeypatch.setattr('mikrotik.get_default_gateway', lambda: '192.168.1.1')
         monkeypatch.setattr('mikrotik.get_dhcp_usage_count', lambda: 18)
+        monkeypatch.setattr('mikrotik.get_dhcp_pool_capacity', lambda: 80)
         monkeypatch.setattr('mikrotik.get_dhcp_leases', lambda: [
             {'dynamic': True, 'status': 'bound', 'address': '192.168.3.44', 'host': 'PC-A', 'last-seen': '10s'}
         ])
@@ -680,6 +681,7 @@ class TestCmdStatus:
         assert "LAPORAN JARINGAN" in rendered
         assert "KOMP POLI" in rendered
         assert "Lease newest" in rendered
+        assert "- Pool: 18/80" in rendered
 
     @pytest.mark.asyncio
     @patch('handlers.general.catat')
@@ -799,6 +801,7 @@ class TestCmdStatus:
         monkeypatch.setattr('mikrotik.get_active_critical_device_names', lambda: [])
         monkeypatch.setattr('mikrotik.get_default_gateway', lambda: (_ for _ in ()).throw(Exception("gw fail")))
         monkeypatch.setattr('mikrotik.get_dhcp_usage_count', lambda: (_ for _ in ()).throw(Exception("dhcp fail")))
+        monkeypatch.setattr('mikrotik.get_dhcp_pool_capacity', lambda: (_ for _ in ()).throw(Exception("pool fail")))
         monkeypatch.setattr('mikrotik.get_dhcp_leases', lambda: [])
         monkeypatch.setattr('core.config.DHCP_POOL_SIZE', 60, raising=False)
         monkeypatch.setattr('core.config.GW_WAN', '192.168.1.1', raising=False)

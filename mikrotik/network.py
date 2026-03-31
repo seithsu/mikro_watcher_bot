@@ -252,6 +252,87 @@ def get_dhcp_usage_count():
     return bound
 
 
+def _count_pool_range_token(token):
+    """Hitung jumlah alamat dari satu token range pool RouterOS."""
+    raw = str(token or "").strip()
+    if not raw:
+        return 0
+
+    if "-" in raw:
+        start_raw, end_raw = [part.strip() for part in raw.split("-", 1)]
+        try:
+            start_ip = ipaddress.ip_address(start_raw)
+            end_ip = ipaddress.ip_address(end_raw)
+        except ValueError:
+            return 0
+        if start_ip.version != 4 or end_ip.version != 4:
+            return 0
+        start_int = int(start_ip)
+        end_int = int(end_ip)
+        if end_int < start_int:
+            return 0
+        return (end_int - start_int) + 1
+
+    try:
+        if "/" in raw:
+            network = ipaddress.ip_network(raw, strict=False)
+            return int(network.num_addresses) if network.version == 4 else 0
+        single_ip = ipaddress.ip_address(raw)
+        return 1 if single_ip.version == 4 else 0
+    except ValueError:
+        return 0
+
+
+def _count_pool_ranges(ranges_text):
+    """Hitung kapasitas pool dari field ranges RouterOS."""
+    total = 0
+    for token in str(ranges_text or "").split(","):
+        total += _count_pool_range_token(token)
+    return total
+
+
+def _expand_pool_capacity(pool_name, pool_map, visited):
+    """Hitung kapasitas pool beserta next-pool tanpa double count."""
+    name = str(pool_name or "").strip()
+    if not name or name in {"none", "static-only"} or name in visited:
+        return 0
+
+    pool_item = pool_map.get(name)
+    if not pool_item:
+        return 0
+
+    visited.add(name)
+    total = _count_pool_ranges(pool_item.get("ranges", ""))
+    next_pool = str(pool_item.get("next-pool", "") or "").strip()
+    if next_pool:
+        total += _expand_pool_capacity(next_pool, pool_map, visited)
+    return total
+
+
+@cached(ttl=60)
+@with_retry
+def get_dhcp_pool_capacity():
+    """Hitung total kapasitas pool DHCP aktif langsung dari RouterOS."""
+    api = pool.get_api()
+    servers = list(api.path('ip', 'dhcp-server'))
+    pools = list(api.path('ip', 'pool'))
+
+    pool_map = {}
+    for item in pools:
+        name = str(item.get("name", "") or "").strip()
+        if name:
+            pool_map[name] = item
+
+    visited = set()
+    total = 0
+    for server in servers:
+        if to_bool(server.get("disabled", False)):
+            continue
+        pool_name = str(server.get("address-pool", "") or "").strip()
+        total += _expand_pool_capacity(pool_name, pool_map, visited)
+    return int(total)
+
+
 @with_retry
 def get_arp_anomalies(critical_macs):
     """
