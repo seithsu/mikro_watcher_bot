@@ -45,6 +45,7 @@ _netwatch_up_since = {}    # host -> datetime saat mulai kandidat recovery
 _netwatch_reconciled_hosts = set()
 _last_state_hash = None
 _api_unavailable_active = False
+_api_unavailable_since = None
 _netwatch_timeout_hits = 0
 _topology_cache = {
     "ts": 0.0,
@@ -75,7 +76,7 @@ async def _sleep_with_jitter(interval, jitter_ratio=0.15, max_jitter=2.0):
 def clear_runtime_state():
     """Reset state netwatch in-memory agar baseline benar-benar fresh."""
     global _ping_semaphore, _ping_semaphore_size
-    global _last_state_hash, _api_unavailable_active, _netwatch_timeout_hits
+    global _last_state_hash, _api_unavailable_active, _api_unavailable_since, _netwatch_timeout_hits
     _netwatch_state.clear()
     _netwatch_fail.clear()
     _netwatch_time_down.clear()
@@ -85,6 +86,7 @@ def clear_runtime_state():
     _netwatch_reconciled_hosts.clear()
     _last_state_hash = None
     _api_unavailable_active = False
+    _api_unavailable_since = None
     _netwatch_timeout_hits = 0
     _topology_cache["ts"] = 0.0
     _topology_cache["aps"] = {}
@@ -225,6 +227,56 @@ def _alert_timestamp():
     return datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 
+def _format_duration_seconds(total_seconds):
+    """Format durasi detik ke teks ringkas yang konsisten."""
+    try:
+        total_seconds = max(0, int(total_seconds or 0))
+    except (TypeError, ValueError):
+        total_seconds = 0
+
+    days, rem = divmod(total_seconds, 86400)
+    hours, rem = divmod(rem, 3600)
+    minutes, seconds = divmod(rem, 60)
+
+    parts = []
+    if days:
+        parts.append(f"{days}h")
+    if hours:
+        parts.append(f"{hours}j")
+    if minutes:
+        parts.append(f"{minutes}m")
+    if seconds or not parts:
+        parts.append(f"{seconds}s")
+    return " ".join(parts)
+
+
+def _parse_iso_datetime(value):
+    """Parse ISO datetime string dengan aman."""
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    with contextlib.suppress(ValueError):
+        return datetime.datetime.fromisoformat(raw)
+    return None
+
+
+def _restore_api_unavailable_since_from_state():
+    """Ambil timestamp API unavailable terakhir dari state.json jika ada."""
+    state_file = config.DATA_DIR / "state.json"
+    if not state_file.exists():
+        return None
+    try:
+        with open(state_file, "r", encoding="utf-8") as fh:
+            payload = json.load(fh)
+    except Exception as e:
+        logger.debug("Gagal membaca state.json untuk restore api_unavailable_since: %s", e)
+        return None
+
+    if payload.get("api_connected", True) is not False:
+        return None
+    return _parse_iso_datetime(payload.get("api_unavailable_since"))
+
+
 def _static_monitored_hosts():
     """Host minimum yang tetap bisa ditampilkan saat API RouterOS tidak tersedia."""
     ignored = _ignored_netwatch_hosts()
@@ -255,8 +307,9 @@ def _build_state_dump(
     api_error="",
     monitor_degraded=False,
     degraded_reason="",
+    api_unavailable_since=None,
 ):
-    return {
+    state = {
         "last_update": datetime.datetime.now().isoformat(),
         "kategori": kategori,
         "hosts": hosts,
@@ -266,6 +319,9 @@ def _build_state_dump(
         "monitor_degraded": bool(monitor_degraded),
         "degraded_reason": str(degraded_reason or ""),
     }
+    if api_unavailable_since:
+        state["api_unavailable_since"] = str(api_unavailable_since)
+    return state
 
 
 async def _load_monitored_topology(refresh_ttl=180):
@@ -382,8 +438,9 @@ def _api_error_hint(api_error):
 
 async def _enter_api_unavailable_state(api_error):
     """Masuk ke mode API unavailable tanpa memerah-merahkan host."""
-    global _api_unavailable_active
+    global _api_unavailable_active, _api_unavailable_since
     if not _api_unavailable_active:
+        _api_unavailable_since = _api_unavailable_since or _restore_api_unavailable_since_from_state() or datetime.datetime.now()
         _api_unavailable_active = True
         _clear_false_down_alerts()
         await kirim_ke_semua_admin(
@@ -412,6 +469,7 @@ async def _enter_api_unavailable_state(api_error):
             api_error=api_error,
             monitor_degraded=False,
             degraded_reason="",
+            api_unavailable_since=_api_unavailable_since.isoformat() if _api_unavailable_since else "",
         )
     )
 
@@ -488,7 +546,7 @@ async def _cleanup_stale_hosts(all_hosts):
 
 async def task_monitor_netwatch():
     """Task 3: Monitor Matrix Lanjutan (Ping & TCP) + Klasifikasi Root Cause."""
-    global _api_unavailable_active, _netwatch_timeout_hits
+    global _api_unavailable_active, _api_unavailable_since, _netwatch_timeout_hits
     interval = int(getattr(config, "NETWATCH_INTERVAL", 15))
     logger.info(f"[INIT] Advanced Matrix Monitor berjalan (Interval: {interval}s)")
     _last_full_timeout_alert = 0.0
@@ -510,10 +568,18 @@ async def task_monitor_netwatch():
                 continue
 
             if _api_unavailable_active:
+                recovery_duration = "Unknown"
+                if _api_unavailable_since:
+                    recovery_duration = _format_duration_seconds(
+                        (datetime.datetime.now() - _api_unavailable_since).total_seconds()
+                    )
                 _api_unavailable_active = False
+                _api_unavailable_since = None
                 acknowledge_alert("api_unavailable")
                 await kirim_ke_semua_admin(
-                    f"✅ <b>MIKROTIK API RECOVERY</b>\nRouter {config.MIKROTIK_IP} kembali connect/login.",
+                    "✅ <b>MIKROTIK API RECOVERY</b>\n"
+                    f"Router {config.MIKROTIK_IP} kembali connect/login.\n"
+                    f"Durasi gangguan API: {recovery_duration}",
                     parse_mode='HTML',
                     severity=AlertSeverity.INFO,
                 )

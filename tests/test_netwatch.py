@@ -84,6 +84,14 @@ class TestAlertTimestamp:
         assert "SE Asia Standard Time" not in ts
         assert len(ts) == 19
 
+    def test_format_duration_seconds_compact(self):
+        from monitor.netwatch import _format_duration_seconds
+
+        assert _format_duration_seconds(0) == "0s"
+        assert _format_duration_seconds(65) == "1m 5s"
+        assert _format_duration_seconds(3661) == "1j 1m 1s"
+        assert _format_duration_seconds(90061) == "1h 1j 1m 1s"
+
 
 def test_host_fail_threshold_prefers_override(monkeypatch):
     import monitor.netwatch as nw
@@ -325,9 +333,11 @@ class TestNetwatchState:
         from monitor import netwatch as nw
 
         orig_flag = nw._api_unavailable_active
+        orig_since = nw._api_unavailable_since
         orig_hash = nw._last_state_hash
         try:
             nw._api_unavailable_active = False
+            nw._api_unavailable_since = None
             nw._last_state_hash = None
             monkeypatch.setattr(nw.config, "DATA_DIR", tmp_path)
             monkeypatch.setattr(nw.config, "MIKROTIK_IP", "192.168.3.1")
@@ -354,9 +364,11 @@ class TestNetwatchState:
             assert state["api_connected"] is False
             assert "API UNAVAILABLE" in state["kategori"]
             assert all(v is None for v in state["hosts"].values())
+            assert state["api_unavailable_since"]
             mock_send.assert_awaited_once()
         finally:
             nw._api_unavailable_active = orig_flag
+            nw._api_unavailable_since = orig_since
             nw._last_state_hash = orig_hash
 
 
@@ -639,6 +651,7 @@ class TestNetwatchHelpers:
         orig_up_since = dict(nw._netwatch_up_since)
         orig_reconciled = set(nw._netwatch_reconciled_hosts)
         orig_api_flag = nw._api_unavailable_active
+        orig_api_since = nw._api_unavailable_since
         orig_hash = nw._last_state_hash
         try:
             host = "192.168.3.10"
@@ -679,6 +692,7 @@ class TestNetwatchHelpers:
                 "DNS_Resolv": None,
             })
             nw._api_unavailable_active = True
+            nw._api_unavailable_since = nw.datetime.datetime.now() - nw.datetime.timedelta(minutes=5, seconds=7)
             nw._last_state_hash = None
 
             monkeypatch.setattr(nw.config, "DATA_DIR", tmp_path)
@@ -744,6 +758,7 @@ class TestNetwatchHelpers:
 
             messages = [call.args[0] for call in send_mock.await_args_list]
             assert any("MIKROTIK API RECOVERY" in msg for msg in messages)
+            assert any("Durasi gangguan API:" in msg for msg in messages)
             assert any("RECOVERY" in msg and host in msg for msg in messages)
             ack_mock.assert_any_call("api_unavailable")
             ack_mock.assert_any_call(f"down_{host}")
@@ -764,4 +779,5 @@ class TestNetwatchHelpers:
             nw._netwatch_reconciled_hosts.clear()
             nw._netwatch_reconciled_hosts.update(orig_reconciled)
             nw._api_unavailable_active = orig_api_flag
+            nw._api_unavailable_since = orig_api_since
             nw._last_state_hash = orig_hash
