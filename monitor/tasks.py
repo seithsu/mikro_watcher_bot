@@ -1,4 +1,4 @@
-﻿# ============================================
+# ============================================
 # MONITOR/TASKS - Monitor Tasks (System, Logs, DHCP/ARP)
 # ============================================
 
@@ -568,6 +568,7 @@ async def task_monitor_system():
                 await _sleep_with_jitter(interval)
                 continue
 
+
             await cek_disk(info)
             # W2 FIX: Ambil interfaces sekali dan reuse untuk cek_interface + traffic check
             _cached_interfaces = await _get_interfaces_snapshot(cache_ttl=max(interval, 180))
@@ -596,11 +597,46 @@ async def task_monitor_system():
                         if not _last_alerts.get(alert_key):
                             rx_mb = rx_bps / 1_000_000
                             tx_mb = tx_bps / 1_000_000
+
+                            # Ambil top users dari Simple Queue untuk ditampilkan di alert
+                            top_users_text = ""
+                            try:
+                                from mikrotik import get_top_queues
+                                top = await with_timeout(
+                                    asyncio.to_thread(get_top_queues, 5),
+                                    timeout=8,
+                                    log_key="tasks:traffic_alert:get_top_queues",
+                                    warn_every_sec=300,
+                                )
+                                if top:
+                                    top_lines = []
+                                    for idx, q in enumerate(top[:3], 1):
+                                        if not isinstance(q, dict):
+                                            continue
+                                        name = q.get('name', '?')
+                                        q_rx = _queue_rate_to_mbps(q.get('rx_rate', 0))
+                                        q_tx = _queue_rate_to_mbps(q.get('tx_rate', 0))
+                                        q_total = q_rx + q_tx
+                                        if q_total <= 0:
+                                            continue
+                                        top_lines.append(
+                                            f"  {idx}. <b>{name}</b> — {q_total:.1f} Mbps "
+                                            f"(RX: {q_rx:.1f} | TX: {q_tx:.1f})"
+                                        )
+                                    if top_lines:
+                                        top_users_text = (
+                                            "\n\n👥 <b>Top Pengguna Saat Ini:</b>\n"
+                                            + "\n".join(top_lines)
+                                        )
+                            except Exception as tq_err:
+                                logger.debug("Gagal ambil top queues untuk traffic alert: %s", tq_err)
+
                             await kirim_ke_semua_admin(
                                 f"⚠️ <b>TRAFFIC ALERT</b>\n\n"
                                 f"Interface: <b>{iface['name']}</b>\n"
                                 f"Traffic melampaui threshold ({cfg.TRAFFIC_THRESHOLD_MBPS} Mbps)\n"
-                                f"RX: {rx_mb:.1f} Mbps\nTX: {tx_mb:.1f} Mbps",
+                                f"RX: {rx_mb:.1f} Mbps\nTX: {tx_mb:.1f} Mbps"
+                                f"{top_users_text}",
                                 parse_mode='HTML'
                             )
                             _last_alerts[alert_key] = True
