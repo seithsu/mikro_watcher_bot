@@ -972,9 +972,16 @@ async def test_post_init_sets_executor_and_commands(monkeypatch):
             self.exception_handler = handler
 
     loop = DummyLoop()
-    app = SimpleNamespace(bot=SimpleNamespace(set_my_commands=AsyncMock()))
+    app = SimpleNamespace(bot=SimpleNamespace(
+        set_my_commands=AsyncMock(),
+        send_message=AsyncMock(),
+    ))
     monkeypatch.setattr(bot.asyncio, "get_running_loop", lambda: loop)
     monkeypatch.setattr(bot.cfg, "ASYNC_THREAD_WORKERS", 4, raising=False)
+    monkeypatch.setattr(bot.cfg, "ADMIN_IDS", [111, 222], raising=False)
+    monkeypatch.setattr(bot.cfg, "MIKROTIK_IP", "192.168.3.1", raising=False)
+    monkeypatch.setattr(bot.cfg, "MIKROTIK_PORT", 8728, raising=False)
+    monkeypatch.setattr(bot.cfg, "MIKROTIK_USE_SSL", False, raising=False)
     monkeypatch.setattr(bot, "_default_executor", None)
 
     await bot.post_init(app)
@@ -982,8 +989,36 @@ async def test_post_init_sets_executor_and_commands(monkeypatch):
     assert loop.executor is not None
     assert loop.exception_handler is not None
     app.bot.set_my_commands.assert_called_once()
+    assert app.bot.send_message.await_count == 2
+    sent_kwargs = app.bot.send_message.await_args_list[0].kwargs
+    assert sent_kwargs["parse_mode"] == "HTML"
+    assert "MIKRO WATCHER ONLINE" in sent_kwargs["text"]
+    assert "/start" in sent_kwargs["text"]
+    assert "/status" in sent_kwargs["text"]
     assert bot._default_executor is loop.executor
     await bot.post_shutdown(app)
+
+
+@pytest.mark.asyncio
+async def test_notify_startup_keeps_going_when_one_admin_fails(caplog, monkeypatch):
+    async def fake_send_message(**kwargs):
+        if kwargs["chat_id"] == 111:
+            raise RuntimeError("boom")
+        return None
+
+    app = SimpleNamespace(bot=SimpleNamespace(send_message=AsyncMock(side_effect=fake_send_message)))
+    monkeypatch.setattr(bot.cfg, "ADMIN_IDS", [111, 222], raising=False)
+    monkeypatch.setattr(bot.cfg, "MIKROTIK_IP", "192.168.3.1", raising=False)
+    monkeypatch.setattr(bot.cfg, "MIKROTIK_PORT", 8729, raising=False)
+    monkeypatch.setattr(bot.cfg, "MIKROTIK_USE_SSL", True, raising=False)
+
+    with caplog.at_level("WARNING"):
+        await bot._notify_startup(app)
+
+    assert app.bot.send_message.await_count == 2
+    sent_kwargs = app.bot.send_message.await_args_list[1].kwargs
+    assert "API-SSL" in sent_kwargs["text"]
+    assert "Gagal kirim notifikasi startup" in caplog.text
 
 
 @pytest.mark.asyncio

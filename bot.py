@@ -439,9 +439,44 @@ async def callback_wol(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
          catat(user.id, user.username, f"/wol {mac_asli}", f"error: {e}")
          await query.message.reply_text("❌ Error saat mengirim WoL. Cek log bot untuk detail teknis.", reply_markup=get_back_button())
+ 
+ 
+async def _notify_startup(app: Application):
+    """Kirim notifikasi bahwa bot Telegram sudah siap menerima update."""
+    admin_ids = list(getattr(cfg, "ADMIN_IDS", ADMIN_IDS) or [])
+    if not admin_ids:
+        return
 
+    started_at = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
+    transport = "API-SSL" if getattr(cfg, "MIKROTIK_USE_SSL", False) else "API"
+    router_ip = str(getattr(cfg, "MIKROTIK_IP", "") or "-")
+    router_port = int(getattr(cfg, "MIKROTIK_PORT", 0) or 0)
+    message = (
+        "✅ <b>MIKRO WATCHER ONLINE</b>\n"
+        f"🏥 <b>{INSTITUTION_NAME}</b>\n\n"
+        "<b>Status Startup</b>\n"
+        "• Engine Telegram: <b>READY</b>\n"
+        f"• Versi Bot: <code>v{BOT_VERSION}</code>\n"
+        f"• Waktu Start: <code>{started_at}</code>\n\n"
+        "<b>Koneksi Router</b>\n"
+        f"• Endpoint: <code>{router_ip}:{router_port}</code>\n"
+        f"• Transport: <code>{transport}</code>\n\n"
+        "<b>Aksi Cepat</b>\n"
+        "• <code>/start</code> buka menu utama\n"
+        "• <code>/status</code> cek kondisi router\n\n"
+        "ℹ️ Bot siap menerima perintah Telegram."
+    )
 
+    success_count = 0
+    for admin_id in admin_ids:
+        try:
+            await app.bot.send_message(chat_id=admin_id, text=message, parse_mode="HTML")
+            success_count += 1
+        except Exception as e:
+            logger.warning("Gagal kirim notifikasi startup ke admin %s: %s", admin_id, e)
 
+    if success_count:
+        logger.info("Notifikasi startup bot terkirim ke %s admin.", success_count)
 
 
 async def post_init(app: Application):
@@ -470,6 +505,7 @@ async def post_init(app: Application):
     ]
     await app.bot.set_my_commands(commands)
     logger.info("Bot commands menu updated.")
+    await _notify_startup(app)
 
 
 async def post_shutdown(app: Application):

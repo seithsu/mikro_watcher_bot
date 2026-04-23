@@ -539,18 +539,14 @@ class TestNetwatchHelpers:
         nw._snapshot_cache["ts"] = 0.0
         nw._snapshot_cache["value"] = ""
         monkeypatch.setattr(nw, "get_status", lambda: {"cpu": 10, "ram_total": 1024 * 1024 * 256, "ram_free": 1024 * 1024 * 200})
-        monkeypatch.setattr(nw, "get_interfaces", lambda: [
-            {"name": "ether1", "rx_error": 1, "tx_error": 2},
-            {"name": "bridge", "rx_error": 0, "tx_error": 0},
-        ])
         monkeypatch.setattr(nw, "get_dhcp_usage_count", lambda: 30)
+        monkeypatch.setattr(nw, "get_dhcp_pool_capacity", lambda: 60)
         monkeypatch.setattr(nw.config, "DHCP_POOL_SIZE", 60)
-        monkeypatch.setattr(nw.config, "WAN_IFACE_KEYWORDS", ["ether1"])
-        monkeypatch.setattr(nw.config, "LAN_IFACE_KEYWORDS", ["bridge"])
 
         ok = nw._generate_snapshot()
         assert "CPU:" in ok
-        assert "DHCP:" in ok
+        assert "DHCP: 30/60" in ok
+        assert "Err INDIBIZ" not in ok
 
         nw._snapshot_cache["ts"] = 0.0
         nw._snapshot_cache["value"] = ""

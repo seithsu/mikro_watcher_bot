@@ -478,7 +478,6 @@ def _build_snapshot_now():
     """Mengambil snapshot parameter kritikal saat down besar terjadi."""
     try:
         info = get_status()
-        ifaces = get_interfaces()
 
         cpu = info.get('cpu', '?')
         total = int(info.get('ram_total', 0))
@@ -496,22 +495,12 @@ def _build_snapshot_now():
         except Exception as e:
             logger.debug("Snapshot DHCP pool capacity fallback ke config: %s", e)
             dhcp_pool_size = int(getattr(config, "DHCP_POOL_SIZE", 0) or 0)
-        pool_pct = (dhcp_count / dhcp_pool_size) * 100 if dhcp_pool_size > 0 else 0
 
-        inet_err = "0/0"
-        loc_err = "0/0"
-        try:
-            for i in ifaces:
-                iname = i['name'].lower()
-                if any(kw in iname for kw in config.WAN_IFACE_KEYWORDS):
-                    inet_err = f"{i.get('rx_error', '?')}/{i.get('tx_error', '?')}"
-                if any(kw in iname for kw in config.LAN_IFACE_KEYWORDS):
-                    loc_err = f"{i.get('rx_error', '?')}/{i.get('tx_error', '?')}"
-        except Exception as e:
-            logger.debug("Snapshot interface error fallback: %s", e)
+        dhcp_text = str(dhcp_count)
+        if dhcp_pool_size > 0:
+            dhcp_text = f"{dhcp_count}/{dhcp_pool_size}"
 
-        return (f"CPU: {cpu}% | RAM free: {ram_free_mb:.1f}MB | DHCP: {pool_pct:.0f}%\n"
-                f"Err INDIBIZ: {inet_err} | Err LOCAL: {loc_err}")
+        return f"CPU: {cpu}% | RAM free: {ram_free_mb:.1f}MB | DHCP: {dhcp_text}"
     except Exception as e:
         return f"Snapshot gagal: {e}"
 
