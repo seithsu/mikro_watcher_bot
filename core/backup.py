@@ -71,9 +71,14 @@ def backup_semua():
     return backup_name
 
 
-if __name__ == "__main__":
+def main():
+    """Entry point script backup manual."""
     logging.basicConfig(level=logging.INFO, format='%(message)s')
     logger.info("[BACKUP] BACKUP BOT MIKROTIK")
     logger.info("=" * 30)
     backup_semua()
     logger.info("=" * 30)
+
+
+if __name__ == "__main__":
+    main()

@@ -485,18 +485,30 @@ def _build_snapshot_now():
         free = int(info.get('ram_free', 0))
         ram_free_mb = free / (1024*1024) if total > 0 else 0
 
-        dhcp_count = get_dhcp_usage_count()
-        dhcp_pool_size = int(get_dhcp_pool_capacity() or config.DHCP_POOL_SIZE or 0)
+        try:
+            dhcp_count = int(get_dhcp_usage_count() or 0)
+        except Exception as e:
+            logger.debug("Snapshot DHCP usage fallback ke 0: %s", e)
+            dhcp_count = 0
+
+        try:
+            dhcp_pool_size = int(get_dhcp_pool_capacity() or config.DHCP_POOL_SIZE or 0)
+        except Exception as e:
+            logger.debug("Snapshot DHCP pool capacity fallback ke config: %s", e)
+            dhcp_pool_size = int(getattr(config, "DHCP_POOL_SIZE", 0) or 0)
         pool_pct = (dhcp_count / dhcp_pool_size) * 100 if dhcp_pool_size > 0 else 0
 
         inet_err = "0/0"
         loc_err = "0/0"
-        for i in ifaces:
-            iname = i['name'].lower()
-            if any(kw in iname for kw in config.WAN_IFACE_KEYWORDS):
-                inet_err = f"{i.get('rx_error', '?')}/{i.get('tx_error', '?')}"
-            if any(kw in iname for kw in config.LAN_IFACE_KEYWORDS):
-                loc_err = f"{i.get('rx_error', '?')}/{i.get('tx_error', '?')}"
+        try:
+            for i in ifaces:
+                iname = i['name'].lower()
+                if any(kw in iname for kw in config.WAN_IFACE_KEYWORDS):
+                    inet_err = f"{i.get('rx_error', '?')}/{i.get('tx_error', '?')}"
+                if any(kw in iname for kw in config.LAN_IFACE_KEYWORDS):
+                    loc_err = f"{i.get('rx_error', '?')}/{i.get('tx_error', '?')}"
+        except Exception as e:
+            logger.debug("Snapshot interface error fallback: %s", e)
 
         return (f"CPU: {cpu}% | RAM free: {ram_free_mb:.1f}MB | DHCP: {pool_pct:.0f}%\n"
                 f"Err INDIBIZ: {inet_err} | Err LOCAL: {loc_err}")

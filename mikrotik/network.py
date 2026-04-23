@@ -359,6 +359,51 @@ def get_arp_anomalies(critical_macs):
     return anomalies
 
 
+def _is_active_arp_entry(arp):
+    """Tentukan apakah entri ARP layak dianggap host aktif."""
+    mac = str(arp.get('mac-address', '') or '').strip()
+    if not mac or mac == '00:00:00:00:00:00':
+        return False
+
+    status = str(arp.get('status', '') or '').strip().lower()
+    if status in {'stale', 'failed', 'incomplete', 'delay', 'probe'}:
+        return False
+
+    complete_val = arp.get('complete')
+    if complete_val is not None and str(complete_val).strip().lower() in {'false', 'no', '0'}:
+        return False
+
+    for key in ('invalid', 'disabled'):
+        raw = arp.get(key)
+        if raw is not None and str(raw).strip().lower() in {'true', 'yes', '1'}:
+            return False
+
+    return True
+
+
+@cached(ttl=10)
+@with_retry
+def get_active_arp_ip_set():
+    """Ambil set IP dari entri ARP aktif untuk cross-check host yang benar-benar hidup."""
+    api = pool.get_api()
+    arp_list = list(api.path('ip', 'arp'))
+    active_ips = set()
+
+    for arp in arp_list:
+        if not _is_active_arp_entry(arp):
+            continue
+        address = str(arp.get('address', '') or '').strip()
+        if not address:
+            continue
+        try:
+            ipaddress.ip_address(address)
+        except ValueError:
+            continue
+        active_ips.add(address)
+
+    return active_ips
+
+
 @with_retry
 def get_mikrotik_log(lines=20):
     """Ambil tail log router dengan payload minimum + cache pendek."""

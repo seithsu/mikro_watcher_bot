@@ -15,7 +15,7 @@ from telegram import InlineKeyboardMarkup, InlineKeyboardButton
 import core.config as cfg
 from mikrotik import (
     get_status, get_interfaces, get_traffic, get_mikrotik_log,
-    get_dhcp_usage_count, get_dhcp_pool_capacity, get_arp_anomalies, block_ip, _pool
+    get_dhcp_usage_count, get_dhcp_pool_capacity, get_arp_anomalies, get_active_arp_ip_set, block_ip, _pool
 )
 from .alerts import (
     kirim_ke_semua_admin, with_timeout, bot, check_escalation, send_digest,
@@ -772,9 +772,33 @@ def _should_skip_top_bw_queue(queue_item):
     return False
 
 
+def _extract_single_target_ip(queue_item):
+    """Ambil target IP tunggal dari queue /32. Return None jika bukan host tunggal."""
+    if not isinstance(queue_item, dict):
+        return None
+
+    target = str(queue_item.get('target', '')).strip()
+    if not target or "," in target:
+        return None
+
+    if "/" not in target:
+        return _normalize_ipv4(target)
+
+    try:
+        net = ipaddress.ip_network(target, strict=False)
+    except ValueError:
+        return None
+
+    if net.prefixlen != 32:
+        return None
+    return str(net.network_address)
+
+
 def _normalize_top_bw_candidates(queue_list):
     """Normalisasi queue list menjadi kandidat terurut untuk evaluasi top-N."""
     candidates = []
+    active_arp_ips = None
+
     for q in queue_list:
         if not isinstance(q, dict):
             continue
@@ -785,6 +809,23 @@ def _normalize_top_bw_candidates(queue_list):
             continue
         if _should_skip_top_bw_queue(q):
             continue
+
+        target_ip = _extract_single_target_ip(q)
+        if target_ip:
+            # Query ARP aktif hanya saat queue benar-benar merepresentasikan satu host.
+            if active_arp_ips is None:
+                try:
+                    active_arp_ips = set(get_active_arp_ip_set() or set())
+                except Exception as e:
+                    logger.debug("Gagal mengambil active ARP IP set untuk top_bw: %s", e)
+                    active_arp_ips = set()
+            if active_arp_ips and target_ip not in active_arp_ips:
+                logger.info(
+                    "[top_bw] skip queue '%s' karena target %s tidak aktif di ARP.",
+                    name,
+                    target_ip,
+                )
+                continue
 
         rx_bps = float(q.get('rx_rate', 0) or 0)
         tx_bps = float(q.get('tx_rate', 0) or 0)

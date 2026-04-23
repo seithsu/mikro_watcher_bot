@@ -4,7 +4,6 @@
 # ============================================
 
 import os
-import runpy
 import zipfile
 import pytest
 from pathlib import Path
@@ -78,12 +77,14 @@ class TestBackupSemua:
         os.remove(result)
 
     def test_module_main_runs_as_script(self, tmp_path, monkeypatch):
-        """Menjalankan core.backup sebagai script harus masuk ke blok __main__."""
+        """Menjalankan entrypoint backup harus mengaktifkan setup logging."""
         monkeypatch.chdir(tmp_path)
         (tmp_path / "bot.py").write_text("print('bot')", encoding="utf-8")
 
+        from core import backup
+
         with patch("logging.basicConfig") as basic_config:
-            runpy.run_module("core.backup", run_name="__main__")
+            backup.main()
 
         basic_config.assert_called_once()
         created = list(tmp_path.glob("backup_bot_*.zip"))
