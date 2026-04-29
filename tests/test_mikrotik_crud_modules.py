@@ -106,6 +106,28 @@ class TestFirewallModule:
         fw.update.assert_called_once_with(**{".id": "*2", "disabled": "true"})
 
     @patch("mikrotik.firewall.pool.get_api")
+    def test_get_address_list_entries_filters_by_list_name(self, mock_get_api):
+        from mikrotik.firewall import get_address_list_entries
+
+        api = MagicMock()
+        mock_get_api.return_value = api
+        api.path.return_value = iter([
+            {".id": "*1", "address": "192.168.3.10", "list": "clown_list", "comment": "manual"},
+            {".id": "*2", "address": "192.168.3.11", "list": "auto_block", "comment": "auto"},
+        ])
+
+        rows = get_address_list_entries("clown_list")
+        assert rows == [
+            {
+                "id": "*1",
+                "address": "192.168.3.10",
+                "list": "clown_list",
+                "comment": "manual",
+                "disabled": False,
+            }
+        ]
+
+    @patch("mikrotik.firewall.pool.get_api")
     def test_block_ip_updates_existing(self, mock_get_api):
         from mikrotik.firewall import block_ip
 
@@ -159,6 +181,14 @@ class TestFirewallModule:
 
 
 class TestQueueModule:
+    def test_extract_single_queue_target_ip(self):
+        from mikrotik.queue import extract_single_queue_target_ip
+
+        assert extract_single_queue_target_ip({"target": "192.168.3.10/32"}) == "192.168.3.10"
+        assert extract_single_queue_target_ip({"target": "192.168.3.10"}) == "192.168.3.10"
+        assert extract_single_queue_target_ip({"target": "192.168.3.0/24"}) is None
+        assert extract_single_queue_target_ip({"target": "192.168.3.10/32,192.168.3.11/32"}) is None
+
     @patch("mikrotik.queue.pool.get_api")
     def test_get_simple_queues_maps_rows(self, mock_get_api):
         from mikrotik.queue import get_simple_queues

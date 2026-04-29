@@ -241,6 +241,7 @@ async def _build_home_menu():
             InlineKeyboardButton("🧰 Tools", callback_data='menu_tools'),
             InlineKeyboardButton("⚙️ System", callback_data='menu_system')
         ],
+        [InlineKeyboardButton("🤡 Clown", callback_data='cmd_clown')],
         [InlineKeyboardButton("🧹 Reset Data", callback_data='reset_data_confirm')],
         [InlineKeyboardButton("❓ Help", callback_data='cmd_help')]
     ]
@@ -494,6 +495,8 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "<b>🛡️ Security</b>\n"
         "/firewall — Kelola Firewall Rules\n"
         "/vpn — Monitor VPN Tunnels\n\n"
+        "<b>🤡 Clown</b>\n"
+        "/clown — Block/Unblock Internet Device\n\n"
         "<b>⚙️ System</b>\n"
         "/mute — Matikan Notifikasi Alert\n"
         "/unmute — Nyalakan Kembali Alert\n"

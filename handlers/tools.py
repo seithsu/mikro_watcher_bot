@@ -1,5 +1,6 @@
 ﻿import logging
 import asyncio
+import ipaddress
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
@@ -7,18 +8,21 @@ from telegram.ext import ContextTypes
 from core.logger import catat
 from .utils import (
     _check_access, cek_admin, get_back_button, append_back_button,
-    format_bytes_auto, escape_html, generic_error_html, with_menu_timestamp
+    format_bytes_auto, escape_html, generic_error_html, with_menu_timestamp,
+    set_cache_with_ts, get_cache_if_fresh
 )
 from core.config import PING_COUNT
 from mikrotik import (
     ping_host, get_dns_static, add_dns_static, remove_dns_static,
     get_schedulers, set_scheduler_status,
     get_vpn_tunnels, get_firewall_rules, toggle_firewall_rule, _format_bytes,
-    get_simple_queues, get_monitored_aps, get_monitored_servers
+    get_simple_queues, get_monitored_aps, get_monitored_servers,
+    extract_single_queue_target_ip, get_address_list_entries, block_ip, unblock_ip
 )
 from core import database
 
 logger = logging.getLogger(__name__)
+CLOWN_LIST_NAME = "clown_list"
 
 
 # ============ /ping ============
@@ -857,6 +861,420 @@ async def callback_firewall(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
             except Exception as e:
                 logger.debug("Suppressed non-fatal exception: %s", e)
+
+
+# ============ /clown ============
+
+def _build_clown_menu_markup():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("📋 Ambil dari Queue", callback_data="clownsrc_queue")],
+        [InlineKeyboardButton("✍️ Ketik IP Manual", callback_data="clownsrc_manual")],
+        [InlineKeyboardButton("🗂️ Clown-list", callback_data="clownlist_0")],
+    ])
+
+
+def _get_clown_queue_choices():
+    """Ambil queue yang target-nya bisa dipakai sebagai single-host block."""
+    queues = get_simple_queues()
+    choices = []
+    for item in queues:
+        ip_address = extract_single_queue_target_ip(item)
+        if not ip_address:
+            continue
+        choices.append({
+            'id': str(item.get('id') or item.get('.id') or ''),
+            'name': str(item.get('name') or ip_address),
+            'ip': ip_address,
+            'comment': str(item.get('comment') or '').strip(),
+        })
+    choices.sort(key=lambda row: (row['name'].lower(), row['ip']))
+    return choices
+
+
+def _format_clown_queue_page(queue_choices, page=0, per_page=8):
+    total = len(queue_choices)
+    total_pages = max(1, (total + per_page - 1) // per_page)
+    page = max(0, min(page, total_pages - 1))
+    start = page * per_page
+    end = min(start + per_page, total)
+
+    text = (
+        f"🤡 <b>CLOWN - PILIH DARI QUEUE</b>\n"
+        f"Total queue valid: {total} | Hal {page + 1}/{total_pages}\n"
+        f"{'━' * 28}\n\n"
+    )
+
+    for idx, item in enumerate(queue_choices[start:end], start=start + 1):
+        note = f" | {escape_html(item['comment'])}" if item['comment'] else ""
+        text += (
+            f"<b>{idx}.</b> {escape_html(item['name'])}\n"
+            f"   IP: <code>{escape_html(item['ip'])}</code>{note}\n\n"
+        )
+
+    keyboard = []
+    for idx, item in enumerate(queue_choices[start:end], start=start):
+        keyboard.append([
+            InlineKeyboardButton(
+                f"🎯 {item['name']}"[:60],
+                callback_data=f"clownqpick_{idx}"
+            )
+        ])
+
+    nav = []
+    if page > 0:
+        nav.append(InlineKeyboardButton("◀️ Prev", callback_data=f"clownqpage_{page - 1}"))
+    if page < total_pages - 1:
+        nav.append(InlineKeyboardButton("Next ▶️", callback_data=f"clownqpage_{page + 1}"))
+    if nav:
+        keyboard.append(nav)
+    keyboard.append([InlineKeyboardButton("🔄 Refresh Queue", callback_data="clownsrc_queue")])
+
+    return with_menu_timestamp(text), InlineKeyboardMarkup(keyboard)
+
+
+def _format_clown_blocked_page(entries, page=0, per_page=8):
+    total = len(entries)
+    total_pages = max(1, (total + per_page - 1) // per_page)
+    page = max(0, min(page, total_pages - 1))
+    start = page * per_page
+    end = min(start + per_page, total)
+
+    if not entries:
+        text = with_menu_timestamp(
+            "🤡 <b>CLOWN-LIST</b>\n\n<i>Belum ada IP yang sedang diblok.</i>"
+        )
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🔄 Refresh", callback_data="clownlist_0")]
+        ])
+        return text, keyboard
+
+    text = (
+        f"🤡 <b>CLOWN-LIST</b>\n"
+        f"Total block: {total} | Hal {page + 1}/{total_pages}\n"
+        f"{'━' * 24}\n\n"
+    )
+
+    keyboard = []
+    for idx, item in enumerate(entries[start:end], start=start + 1):
+        address = str(item.get('address') or '-')
+        comment = str(item.get('comment') or '-')
+        text += (
+            f"<b>{idx}.</b> <code>{escape_html(address)}</code>\n"
+            f"   Sumber: {escape_html(comment)}\n\n"
+        )
+        keyboard.append([
+            InlineKeyboardButton(
+                f"✅ Unblock {address}",
+                callback_data=f"clownunblock_{idx - 1}"
+            )
+        ])
+
+    nav = []
+    if page > 0:
+        nav.append(InlineKeyboardButton("◀️ Prev", callback_data=f"clownlist_{page - 1}"))
+    if page < total_pages - 1:
+        nav.append(InlineKeyboardButton("Next ▶️", callback_data=f"clownlist_{page + 1}"))
+    if nav:
+        keyboard.append(nav)
+    keyboard.append([InlineKeyboardButton("🔄 Refresh", callback_data="clownlist_0")])
+
+    return with_menu_timestamp(text), InlineKeyboardMarkup(keyboard)
+
+
+def _store_pending_clown_block(context, payload):
+    context.user_data['pending_clown_block'] = payload
+
+
+def _get_pending_clown_block(context):
+    return context.user_data.get('pending_clown_block')
+
+
+def _clear_pending_clown_state(context):
+    context.user_data.pop('awaiting_clown_ip', None)
+    context.user_data.pop('pending_clown_block', None)
+
+
+async def cmd_clown(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Perintah /clown - blok internet via queue atau IP manual."""
+    user = update.effective_user
+    if await _check_access(update, user, "/clown"):
+        return
+
+    _clear_pending_clown_state(context)
+    text = with_menu_timestamp(
+        "🤡 <b>MENU CLOWN</b>\n\n"
+        "Pilih sumber IP yang ingin diblok, atau buka <b>Clown-list</b> untuk melihat "
+        "dan membuka blokir yang aktif."
+    )
+    reply_markup = append_back_button(_build_clown_menu_markup(), 'cmd_start')
+
+    if update.callback_query:
+        await update.callback_query.answer()
+        try:
+            await update.callback_query.message.edit_text(text, parse_mode='HTML', reply_markup=reply_markup)
+            return
+        except Exception as e:
+            logger.debug("Non-fatal UI update error: %s", e)
+
+    await update.effective_message.reply_text(text, parse_mode='HTML', reply_markup=reply_markup)
+
+
+async def handle_clown_manual_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Tangani input manual IP untuk menu clown."""
+    if not context.user_data.get('awaiting_clown_ip'):
+        return False
+
+    text_raw = str(getattr(update.effective_message, "text", "") or "").strip()
+    try:
+        parsed_ip = ipaddress.ip_address(text_raw)
+    except ValueError:
+        await update.effective_message.reply_text(
+            with_menu_timestamp(
+                "❌ Format IP tidak valid.\n\n"
+                "Kirim IP host yang valid, contoh: <code>192.168.3.120</code>"
+            ),
+            parse_mode='HTML',
+            reply_markup=get_back_button('cmd_clown')
+        )
+        return True
+
+    ip_text = str(parsed_ip)
+    _store_pending_clown_block(context, {
+        'ip': ip_text,
+        'comment': 'manual',
+        'display_name': ip_text,
+        'source': 'manual',
+    })
+    context.user_data.pop('awaiting_clown_ip', None)
+
+    confirm_text = with_menu_timestamp(
+        "⚠️ <b>Konfirmasi Block Internet</b>\n\n"
+        f"Sumber: <b>manual</b>\n"
+        f"IP: <code>{escape_html(ip_text)}</code>\n\n"
+        "Lanjutkan blok internet untuk IP ini?"
+    )
+    keyboard = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("✅ Ya, block", callback_data="clownexec_block"),
+            InlineKeyboardButton("❌ Batal", callback_data="cmd_clown"),
+        ]
+    ])
+    await update.effective_message.reply_text(
+        confirm_text,
+        parse_mode='HTML',
+        reply_markup=append_back_button(keyboard, 'cmd_clown')
+    )
+    return True
+
+
+async def callback_clown(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle callback interaktif menu clown."""
+    query = update.callback_query
+    user = query.from_user
+    if await _check_access(update, user, "callback_clown"):
+        return
+
+    data = str(query.data or "")
+
+    if data == "clownsrc_queue":
+        await query.answer("Memuat daftar queue...")
+        try:
+            queue_choices = await asyncio.to_thread(_get_clown_queue_choices)
+            set_cache_with_ts(context.bot_data, "clown_queue_choices", queue_choices)
+            if not queue_choices:
+                await query.edit_message_text(
+                    with_menu_timestamp(
+                        "🤡 <b>CLOWN - PILIH DARI QUEUE</b>\n\n"
+                        "<i>Tidak ada queue dengan target single IP yang bisa dipakai.</i>"
+                    ),
+                    parse_mode='HTML',
+                    reply_markup=get_back_button('cmd_clown')
+                )
+                return
+            text, reply_markup = _format_clown_queue_page(queue_choices, page=0)
+            await query.edit_message_text(
+                text,
+                parse_mode='HTML',
+                reply_markup=append_back_button(reply_markup, 'cmd_clown')
+            )
+        except Exception as e:
+            logger.debug("callback clown queue load failed: %s", e)
+            await query.edit_message_text(
+                generic_error_html("Gagal memuat daftar queue untuk Clown"),
+                parse_mode='HTML',
+                reply_markup=get_back_button('cmd_clown')
+            )
+        return
+
+    if data.startswith("clownqpage_"):
+        try:
+            page = int(data.replace("clownqpage_", ""))
+        except ValueError:
+            await query.answer("Data tidak valid.", show_alert=True)
+            return
+        queue_choices = get_cache_if_fresh(context.bot_data, "clown_queue_choices", ttl_seconds=900)
+        if queue_choices is None:
+            await query.answer("Data queue kedaluwarsa. Silakan refresh.", show_alert=True)
+            return
+        await query.answer()
+        text, reply_markup = _format_clown_queue_page(queue_choices, page=page)
+        await query.edit_message_text(
+            text,
+            parse_mode='HTML',
+            reply_markup=append_back_button(reply_markup, 'cmd_clown')
+        )
+        return
+
+    if data.startswith("clownqpick_"):
+        try:
+            idx = int(data.replace("clownqpick_", ""))
+        except ValueError:
+            await query.answer("Data tidak valid.", show_alert=True)
+            return
+        queue_choices = get_cache_if_fresh(context.bot_data, "clown_queue_choices", ttl_seconds=900)
+        if queue_choices is None or idx < 0 or idx >= len(queue_choices):
+            await query.answer("Pilihan queue tidak ditemukan.", show_alert=True)
+            return
+        item = queue_choices[idx]
+        _store_pending_clown_block(context, {
+            'ip': item['ip'],
+            'comment': f"queue:{item['name']}",
+            'display_name': item['name'],
+            'source': 'queue',
+        })
+        await query.answer()
+        confirm_text = with_menu_timestamp(
+            "⚠️ <b>Konfirmasi Block Internet</b>\n\n"
+            f"Sumber: <b>queue</b>\n"
+            f"Nama: <b>{escape_html(item['name'])}</b>\n"
+            f"IP: <code>{escape_html(item['ip'])}</code>\n\n"
+            "Lanjutkan blok internet untuk device ini?"
+        )
+        keyboard = InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton("✅ Ya, block", callback_data="clownexec_block"),
+                InlineKeyboardButton("❌ Batal", callback_data="cmd_clown"),
+            ]
+        ])
+        await query.edit_message_text(
+            confirm_text,
+            parse_mode='HTML',
+            reply_markup=append_back_button(keyboard, 'cmd_clown')
+        )
+        return
+
+    if data == "clownsrc_manual":
+        context.user_data['awaiting_clown_ip'] = True
+        context.user_data.pop('pending_clown_block', None)
+        await query.answer()
+        await query.edit_message_text(
+            with_menu_timestamp(
+                "✍️ <b>INPUT IP MANUAL</b>\n\n"
+                "Silakan kirim IP host yang ingin diblok internetnya.\n"
+                "Contoh: <code>192.168.3.120</code>"
+            ),
+            parse_mode='HTML',
+            reply_markup=get_back_button('cmd_clown')
+        )
+        return
+
+    if data == "clownexec_block":
+        pending = _get_pending_clown_block(context)
+        if not pending:
+            await query.answer("Data block tidak ditemukan. Ulangi dari menu Clown.", show_alert=True)
+            return
+        await query.answer("Memblokir internet device...")
+        try:
+            await asyncio.to_thread(block_ip, pending['ip'], pending['comment'], CLOWN_LIST_NAME)
+            catat(
+                user.id,
+                user.username,
+                f"/clown block {pending['ip']}",
+                f"berhasil ({pending.get('source', '-')})",
+            )
+            _clear_pending_clown_state(context)
+            entries = await asyncio.to_thread(get_address_list_entries, CLOWN_LIST_NAME)
+            entries.sort(key=lambda row: str(row.get('address') or ''))
+            set_cache_with_ts(context.bot_data, "clown_block_entries", entries)
+            text, reply_markup = _format_clown_blocked_page(entries, page=0)
+            success_text = text.replace(
+                "🤡 <b>CLOWN-LIST</b>",
+                f"✅ <b>IP {escape_html(pending['ip'])} berhasil diblok.</b>\n\n🤡 <b>CLOWN-LIST</b>",
+                1
+            )
+            await query.edit_message_text(
+                success_text,
+                parse_mode='HTML',
+                reply_markup=append_back_button(reply_markup, 'cmd_clown')
+            )
+        except Exception as e:
+            logger.debug("callback clown block failed: %s", e)
+            await query.edit_message_text(
+                generic_error_html("Gagal memblokir IP via Clown"),
+                parse_mode='HTML',
+                reply_markup=get_back_button('cmd_clown')
+            )
+        return
+
+    if data.startswith("clownlist_"):
+        try:
+            page = int(data.replace("clownlist_", ""))
+        except ValueError:
+            await query.answer("Data tidak valid.", show_alert=True)
+            return
+        await query.answer("Memuat Clown-list...")
+        entries = await asyncio.to_thread(get_address_list_entries, CLOWN_LIST_NAME)
+        entries.sort(key=lambda row: str(row.get('address') or ''))
+        set_cache_with_ts(context.bot_data, "clown_block_entries", entries)
+        text, reply_markup = _format_clown_blocked_page(entries, page=page)
+        await query.edit_message_text(
+            text,
+            parse_mode='HTML',
+            reply_markup=append_back_button(reply_markup, 'cmd_clown')
+        )
+        return
+
+    if data.startswith("clownunblock_"):
+        try:
+            idx = int(data.replace("clownunblock_", ""))
+        except ValueError:
+            await query.answer("Data tidak valid.", show_alert=True)
+            return
+        entries = get_cache_if_fresh(context.bot_data, "clown_block_entries", ttl_seconds=900)
+        if entries is None or idx < 0 or idx >= len(entries):
+            await query.answer("Data Clown-list kedaluwarsa. Silakan refresh.", show_alert=True)
+            return
+        target_ip = str(entries[idx].get('address') or '').strip()
+        if not target_ip:
+            await query.answer("IP block tidak valid.", show_alert=True)
+            return
+        await query.answer(f"Membuka block {target_ip}...")
+        try:
+            await asyncio.to_thread(unblock_ip, target_ip, CLOWN_LIST_NAME)
+            catat(user.id, user.username, f"/clown unblock {target_ip}", "berhasil")
+            refreshed = await asyncio.to_thread(get_address_list_entries, CLOWN_LIST_NAME)
+            refreshed.sort(key=lambda row: str(row.get('address') or ''))
+            set_cache_with_ts(context.bot_data, "clown_block_entries", refreshed)
+            text, reply_markup = _format_clown_blocked_page(refreshed, page=0)
+            success_text = text.replace(
+                "🤡 <b>CLOWN-LIST</b>",
+                f"✅ <b>IP {escape_html(target_ip)} berhasil di-unblock.</b>\n\n🤡 <b>CLOWN-LIST</b>",
+                1
+            )
+            await query.edit_message_text(
+                success_text,
+                parse_mode='HTML',
+                reply_markup=append_back_button(reply_markup, 'cmd_clown')
+            )
+        except Exception as e:
+            logger.debug("callback clown unblock failed: %s", e)
+            await query.edit_message_text(
+                generic_error_html("Gagal membuka blokir IP Clown"),
+                parse_mode='HTML',
+                reply_markup=get_back_button('cmd_clown')
+            )
+        return
+
 # ============ /uptime ============
 
 async def cmd_uptime(update: Update, context: ContextTypes.DEFAULT_TYPE):

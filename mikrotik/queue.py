@@ -2,12 +2,49 @@
 # MIKROTIK/QUEUE - Simple Queue management
 # ============================================
 
+import ipaddress
 import logging
 
 from .connection import pool
 from .decorators import with_retry, cached
 
 logger = logging.getLogger(__name__)
+
+
+def extract_single_queue_target_ip(queue_item):
+    """Ambil satu IP host dari target simple queue.
+
+    Return None jika target kosong, bukan single IP host, atau tidak valid.
+    Contoh valid:
+    - 192.168.3.10/32
+    - 192.168.3.10
+    Contoh invalid:
+    - 192.168.3.0/24
+    - 192.168.3.10-192.168.3.20
+    - 192.168.3.10/32,192.168.3.11/32
+    """
+    target = str((queue_item or {}).get('target', '') or '').strip()
+    if not target or ',' in target or '-' in target:
+        return None
+
+    ip_part = target.split('/')[0].strip() if '/' in target else target
+    if not ip_part:
+        return None
+
+    try:
+        ipaddress.ip_address(ip_part)
+    except ValueError:
+        return None
+
+    if '/' in target:
+        try:
+            network = ipaddress.ip_network(target, strict=False)
+        except ValueError:
+            return None
+        if network.num_addresses != 1:
+            return None
+
+    return ip_part
 
 
 def format_rate_bps(rate_bps):

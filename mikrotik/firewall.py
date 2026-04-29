@@ -50,6 +50,29 @@ def toggle_firewall_rule(rule_id: str, chain_type: str = "filter", disabled: boo
 
 
 @with_retry
+def get_address_list_entries(list_name: str = ""):
+    """Ambil isi Firewall Address List, opsional difilter berdasarkan nama list."""
+    api = pool.get_api()
+    addr_list = list(api.path('ip', 'firewall', 'address-list'))
+    wanted = str(list_name or '').strip()
+    results = []
+
+    for item in addr_list:
+        current_list = item.get('list', '')
+        if wanted and current_list != wanted:
+            continue
+        results.append({
+            'id': item.get('.id', ''),
+            'address': item.get('address', ''),
+            'list': current_list,
+            'comment': item.get('comment', ''),
+            'disabled': to_bool(item.get('disabled', False)),
+        })
+
+    return results
+
+
+@with_retry
 def block_ip(ip_address: str, reason: str = "auto-block", list_name: str = "auto_block"):
     """
     Memasukkan IP ke IP -> Firewall -> Address List.

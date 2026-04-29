@@ -48,6 +48,7 @@ from .queue import (
     get_simple_queues,
     get_top_queues,
     remove_simple_queue,
+    extract_single_queue_target_ip,
 )
 
 # -- DNS --
@@ -69,6 +70,7 @@ from .vpn import get_vpn_tunnels
 # -- Firewall --
 from .firewall import (
     get_firewall_rules,
+    get_address_list_entries,
     toggle_firewall_rule,
     block_ip,
     unblock_ip,

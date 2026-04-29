@@ -288,6 +288,82 @@ class TestFirewallCommand:
         update.effective_message.reply_text.assert_called()
 
 
+# ============ /clown ============
+
+class TestClownCommand:
+    @pytest.mark.asyncio
+    @patch('handlers.tools._check_access', new_callable=AsyncMock, return_value=False)
+    async def test_cmd_clown_shows_menu(self, mock_access):
+        from handlers.tools import cmd_clown
+
+        update = _make_update()
+        context = MagicMock()
+        context.user_data = {}
+
+        await cmd_clown(update, context)
+
+        update.effective_message.reply_text.assert_called_once()
+        assert "MENU CLOWN" in update.effective_message.reply_text.call_args.args[0]
+
+    @pytest.mark.asyncio
+    async def test_handle_clown_manual_input_valid_builds_confirmation(self):
+        from handlers.tools import handle_clown_manual_input
+
+        update = _make_update()
+        update.effective_message.text = "192.168.3.120"
+        context = MagicMock()
+        context.user_data = {"awaiting_clown_ip": True}
+
+        handled = await handle_clown_manual_input(update, context)
+
+        assert handled is True
+        assert context.user_data["pending_clown_block"]["ip"] == "192.168.3.120"
+        update.effective_message.reply_text.assert_called_once()
+        assert "Konfirmasi Block Internet" in update.effective_message.reply_text.call_args.args[0]
+
+    @pytest.mark.asyncio
+    async def test_handle_clown_manual_input_invalid_keeps_waiting(self):
+        from handlers.tools import handle_clown_manual_input
+
+        update = _make_update()
+        update.effective_message.text = "bukan-ip"
+        context = MagicMock()
+        context.user_data = {"awaiting_clown_ip": True}
+
+        handled = await handle_clown_manual_input(update, context)
+
+        assert handled is True
+        assert context.user_data["awaiting_clown_ip"] is True
+        update.effective_message.reply_text.assert_called_once()
+        assert "Format IP tidak valid" in update.effective_message.reply_text.call_args.args[0]
+
+    @pytest.mark.asyncio
+    @patch('handlers.tools.unblock_ip')
+    @patch('handlers.tools.get_address_list_entries', return_value=[])
+    @patch('handlers.tools.catat')
+    @patch('handlers.tools._check_access', new_callable=AsyncMock, return_value=False)
+    async def test_callback_clown_unblock_executes(self, mock_access, mock_catat, mock_entries, mock_unblock):
+        from handlers.tools import callback_clown
+
+        user = MagicMock(id=12345, username="admin")
+        query = MagicMock()
+        query.from_user = user
+        query.data = "clownunblock_0"
+        query.answer = AsyncMock()
+        query.edit_message_text = AsyncMock()
+        update = MagicMock(callback_query=query)
+        context = MagicMock()
+        context.bot_data = {
+            "clown_block_entries": [{"address": "192.168.3.120", "comment": "manual"}],
+            "ts_clown_block_entries": 9999999999,
+        }
+
+        await callback_clown(update, context)
+
+        mock_unblock.assert_called_once_with("192.168.3.120", "clown_list")
+        query.edit_message_text.assert_called_once()
+
+
 # ============ /schedule ============
 
 class TestScheduleCommand:

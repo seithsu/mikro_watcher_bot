@@ -73,7 +73,7 @@ from handlers.tools import (
     cmd_ping, callback_ping, cmd_dns, callback_dns, handle_dns_add,
     cmd_schedule, callback_schedule,
     cmd_vpn, cmd_firewall, callback_firewall, cmd_uptime, callback_uptime,
-    cmd_config, callback_config_reset
+    cmd_config, callback_config_reset, cmd_clown, callback_clown, handle_clown_manual_input
 )
 from handlers.report import (
     cmd_report, callback_report, cmd_bandwidth
@@ -591,6 +591,7 @@ def main():
     app.add_handler(CallbackQueryHandler(callback_dns, pattern="^(dnspage_|dnsdel_|dns_add)"))
     app.add_handler(CallbackQueryHandler(callback_schedule, pattern="^(schedpage_|schedtoggle_|schedexec_)"))
     app.add_handler(CallbackQueryHandler(callback_firewall, pattern="^(fwpage_|fwtoggle_|fwexec_|fwswitch_)"))
+    app.add_handler(CallbackQueryHandler(callback_clown, pattern="^(clownsrc_|clownqpage_|clownqpick_|clownexec_|clownlist_|clownunblock_)"))
     app.add_handler(CallbackQueryHandler(callback_uptime, pattern="^uptime_"))
     app.add_handler(CallbackQueryHandler(callback_report, pattern="^report_"))
     app.add_handler(CallbackQueryHandler(callback_chart, pattern="^chart_"))
@@ -633,6 +634,7 @@ def main():
     app.add_handler(CallbackQueryHandler(cmd_schedule, pattern="^cmd_schedule$"))
     app.add_handler(CallbackQueryHandler(cmd_vpn, pattern="^cmd_vpn$"))
     app.add_handler(CallbackQueryHandler(cmd_firewall, pattern="^cmd_firewall$"))
+    app.add_handler(CallbackQueryHandler(cmd_clown, pattern="^cmd_clown$"))
     app.add_handler(CallbackQueryHandler(cmd_uptime, pattern="^cmd_uptime$"))
     app.add_handler(CallbackQueryHandler(cmd_report, pattern="^cmd_report$"))
     app.add_handler(CallbackQueryHandler(cmd_bandwidth, pattern="^cmd_bandwidth$"))
@@ -669,6 +671,7 @@ def main():
         "schedule": cmd_schedule,
         "vpn": cmd_vpn,
         "firewall": cmd_firewall,
+        "clown": cmd_clown,
         "uptime": cmd_uptime,
         "report": cmd_report,
         "bandwidth": cmd_bandwidth,
@@ -682,6 +685,10 @@ def main():
 
     # DNS add handler (catch text input when awaiting DNS add)
     async def _dns_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if context.user_data.get('awaiting_clown_ip'):
+            handled = await handle_clown_manual_input(update, context)
+            if handled:
+                return
         if context.user_data.get('awaiting_dns_add'):
             handled = await handle_dns_add(update, context)
             if handled:
