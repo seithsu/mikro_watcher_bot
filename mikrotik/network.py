@@ -162,6 +162,8 @@ def get_traffic(interface_name):
             data = result[0]
             rx_bps = to_int(data.get('rx-bits-per-second', 0))
             tx_bps = to_int(data.get('tx-bits-per-second', 0))
+            rx_pps = to_int(data.get('rx-packets-per-second', 0))
+            tx_pps = to_int(data.get('tx-packets-per-second', 0))
 
             # W2 FIX: ambil total byte dari monitor-traffic 'rx-byte' jika tersedia,
             # fallback ke query interface sekali lagi hanya jika tidak ada.
@@ -178,6 +180,8 @@ def get_traffic(interface_name):
                 'name': interface_name,
                 'rx_bps': rx_bps,
                 'tx_bps': tx_bps,
+                'rx_pps': rx_pps,
+                'tx_pps': tx_pps,
                 'rx': format_bytes(rx_bps // 8) + 'ps',
                 'tx': format_bytes(tx_bps // 8) + 'ps',
                 'rx_fmt': format_bytes(rx_bps // 8) + 'ps',
@@ -190,6 +194,7 @@ def get_traffic(interface_name):
 
     return {
         'name': interface_name, 'rx_bps': 0, 'tx_bps': 0,
+        'rx_pps': 0, 'tx_pps': 0,
         'rx': '0 Bps', 'tx': '0 Bps', 'rx_fmt': '0 Bps', 'tx_fmt': '0 Bps',
         'rx_bytes': 0, 'tx_bytes': 0,
     }

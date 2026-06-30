@@ -152,6 +152,21 @@ TOP_BW_ALERT_INTERVAL = int(os.getenv("TOP_BW_ALERT_INTERVAL", "15").strip())
 _top_bw_ignore_queues_raw = os.getenv("TOP_BW_ALERT_IGNORE_QUEUES", "TOTAL-BANDWIDTH").strip()
 TOP_BW_ALERT_IGNORE_QUEUES = [x.strip() for x in _top_bw_ignore_queues_raw.split(",") if x.strip()]
 
+# RX Packet Anomaly Detection (interface-based)
+RX_ANOMALY_ENABLED = os.getenv("RX_ANOMALY_ENABLED", "True").strip().lower() in ['true', '1', 'yes']
+RX_ANOMALY_WARN_PPS = int(os.getenv("RX_ANOMALY_WARN_PPS", "5000").strip())
+RX_ANOMALY_CRIT_PPS = int(os.getenv("RX_ANOMALY_CRIT_PPS", "10000").strip())
+RX_ANOMALY_CONSECUTIVE_HITS = int(os.getenv("RX_ANOMALY_CONSECUTIVE_HITS", "3").strip())
+RX_ANOMALY_RECOVERY_HITS = int(os.getenv("RX_ANOMALY_RECOVERY_HITS", "2").strip())
+RX_ANOMALY_COOLDOWN_SEC = int(os.getenv("RX_ANOMALY_COOLDOWN_SEC", "900").strip())
+_rx_anomaly_iface_raw = os.getenv("RX_ANOMALY_WATCH_IFACE", "local").strip()
+RX_ANOMALY_WATCH_IFACE = [x.strip() for x in _rx_anomaly_iface_raw.split(",") if x.strip()]
+
+# Guardrail: crit tidak boleh di bawah warn
+if RX_ANOMALY_CRIT_PPS < RX_ANOMALY_WARN_PPS:
+    RX_ANOMALY_CRIT_PPS = RX_ANOMALY_WARN_PPS
+
+
 # Threshold Disk Alert (dalam persen)
 DISK_THRESHOLD = int(os.getenv("DISK_THRESHOLD", "85").strip())
 
@@ -402,6 +417,11 @@ _assert_range("TOP_BW_ALERT_COOLDOWN_SEC", TOP_BW_ALERT_COOLDOWN_SEC, 0, 86_400)
 _assert_range("TOP_BW_ALERT_MIN_TX_MBPS", TOP_BW_ALERT_MIN_TX_MBPS, 0, 1_000_000)
 _assert_range("TOP_BW_ALERT_MIN_RX_MBPS", TOP_BW_ALERT_MIN_RX_MBPS, 0, 1_000_000)
 _assert_range("TOP_BW_ALERT_INTERVAL", TOP_BW_ALERT_INTERVAL, 5, 3600)
+_assert_range("RX_ANOMALY_WARN_PPS", RX_ANOMALY_WARN_PPS, 100, 10_000_000)
+_assert_range("RX_ANOMALY_CRIT_PPS", RX_ANOMALY_CRIT_PPS, 100, 10_000_000)
+_assert_range("RX_ANOMALY_CONSECUTIVE_HITS", RX_ANOMALY_CONSECUTIVE_HITS, 1, 20)
+_assert_range("RX_ANOMALY_RECOVERY_HITS", RX_ANOMALY_RECOVERY_HITS, 1, 20)
+_assert_range("RX_ANOMALY_COOLDOWN_SEC", RX_ANOMALY_COOLDOWN_SEC, 0, 86_400)
 _assert_range("DHCP_POOL_SIZE", DHCP_POOL_SIZE, 1, 1_000_000)
 _assert_range("DHCP_ALERT_THRESHOLD", DHCP_ALERT_THRESHOLD, 10, 100)
 _assert_range("REBOOT_COOLDOWN", REBOOT_COOLDOWN, 1, 86_400)
@@ -460,6 +480,9 @@ _OVERRIDABLE_KEYS = {
     'TOP_BW_ALERT_CONSECUTIVE_HITS', 'TOP_BW_ALERT_RECOVERY_HITS',
     'TOP_BW_ALERT_COOLDOWN_SEC', 'TOP_BW_ALERT_MIN_TX_MBPS', 'TOP_BW_ALERT_MIN_RX_MBPS',
     'TOP_BW_ALERT_INTERVAL', 'TOP_BW_ALERT_IGNORE_QUEUES',
+    'RX_ANOMALY_ENABLED', 'RX_ANOMALY_WARN_PPS', 'RX_ANOMALY_CRIT_PPS',
+    'RX_ANOMALY_CONSECUTIVE_HITS', 'RX_ANOMALY_RECOVERY_HITS',
+    'RX_ANOMALY_COOLDOWN_SEC', 'RX_ANOMALY_WATCH_IFACE',
     'DAILY_REPORT_HOUR', 'ALERT_ESCALATION_MINUTES',
     'ALERT_DIGEST_THRESHOLD', 'ALERT_DIGEST_WINDOW',
     'TRAFFIC_LEAK_THRESHOLD_MBPS', 'ALERT_REQUIRE_START',
@@ -503,6 +526,13 @@ _OVERRIDABLE_SCHEMA = {
     'TOP_BW_ALERT_MIN_RX_MBPS': (int, 0, 1_000_000),
     'TOP_BW_ALERT_INTERVAL': (int, 5, 3600),
     'TOP_BW_ALERT_IGNORE_QUEUES': (str, None, None),
+    'RX_ANOMALY_ENABLED': (bool, None, None),
+    'RX_ANOMALY_WARN_PPS': (int, 100, 10_000_000),
+    'RX_ANOMALY_CRIT_PPS': (int, 100, 10_000_000),
+    'RX_ANOMALY_CONSECUTIVE_HITS': (int, 1, 20),
+    'RX_ANOMALY_RECOVERY_HITS': (int, 1, 20),
+    'RX_ANOMALY_COOLDOWN_SEC': (int, 0, 86_400),
+    'RX_ANOMALY_WATCH_IFACE': (str, None, None),
     'DAILY_REPORT_HOUR': (int, 0, 23),
     'ALERT_ESCALATION_MINUTES': (int, 1, 10_000),
     'ALERT_DIGEST_THRESHOLD': (int, 1, 10_000),
@@ -586,7 +616,7 @@ def reload_runtime_overrides(force=False, min_interval=5):
                 cast_val = _parse_runtime_bool(value)
             except ValueError:
                 continue
-        elif key in {'TOP_BW_ALERT_IGNORE_QUEUES', 'NETWATCH_IGNORE_HOSTS'}:
+        elif key in {'TOP_BW_ALERT_IGNORE_QUEUES', 'NETWATCH_IGNORE_HOSTS', 'RX_ANOMALY_WATCH_IFACE'}:
             cast_val = [x.strip() for x in str(value or "").split(",") if x.strip()]
         elif key == 'NETWATCH_FAIL_THRESHOLD_OVERRIDES':
             cast_val = _parse_host_int_map(value)
@@ -602,6 +632,8 @@ def reload_runtime_overrides(force=False, min_interval=5):
     # Guardrail lintas-key: CRIT tidak boleh di bawah WARN.
     if TOP_BW_ALERT_CRIT_MBPS < TOP_BW_ALERT_WARN_MBPS:
         globals()['TOP_BW_ALERT_CRIT_MBPS'] = TOP_BW_ALERT_WARN_MBPS
+    if RX_ANOMALY_CRIT_PPS < RX_ANOMALY_WARN_PPS:
+        globals()['RX_ANOMALY_CRIT_PPS'] = RX_ANOMALY_WARN_PPS
 
     _last_runtime_mtime = mtime
     return True

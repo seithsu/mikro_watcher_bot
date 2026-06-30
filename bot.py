@@ -390,6 +390,56 @@ async def callback_unban(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.message.reply_text("❌ Error saat membuka blokir. Cek log bot untuk detail teknis.", reply_markup=get_back_button())
 
 
+async def callback_rxblock(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle block device dari alert RX Packet Anomaly."""
+    query = update.callback_query
+    data = query.data
+    user = query.from_user
+
+    if await _check_access(update, user, "callback_rxblock"):
+        return
+
+    ip_target = data.replace('rxblock_', '')
+    await query.answer(f"Memproses block {ip_target}...")
+    try:
+        from mikrotik import block_ip
+        result = await asyncio.to_thread(
+            block_ip, ip_target, f"Auto Blocked - RX Anomaly (by {user.username or user.id})"
+        )
+        if result:
+            # Audit log
+            try:
+                database.audit_log(
+                    user.id, user.username, '/rxblock', f"IP: {ip_target}", 'rx_anomaly'
+                )
+            except Exception as dbe:
+                logger.debug("Gagal simpan audit rxblock: %s", dbe)
+
+            await query.edit_message_text(
+                f"🚫 IP <b>{ip_target}</b> berhasil diblokir via Address List.\n\n"
+                f"<i>Alasan: RX Packet Anomaly Detection</i>\n"
+                f"<i>Oleh: {user.username or user.id}</i>",
+                parse_mode='HTML',
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("✅ Unban / Buka Blokir", callback_data=f"unban_{ip_target}")],
+                    [InlineKeyboardButton("🏠 Home", callback_data="cmd_start")],
+                ])
+            )
+            catat(user.id, user.username, f"/rxblock {ip_target}", "berhasil")
+        else:
+            await query.edit_message_text(
+                f"ℹ️ IP <b>{ip_target}</b> sudah ada di daftar blokir.",
+                parse_mode='HTML',
+                reply_markup=get_back_button()
+            )
+    except Exception as e:
+        catat(user.id, user.username, f"/rxblock {ip_target}", f"error: {e}")
+        await query.message.reply_text(
+            "❌ Error saat memblokir IP. Cek log bot untuk detail teknis.",
+            reply_markup=get_back_button()
+        )
+
+
 async def callback_wol(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle Wake on LAN action"""
     query = update.callback_query
@@ -604,6 +654,7 @@ def main():
     app.add_handler(CallbackQueryHandler(callback_reboot, pattern="^reboot_"))
     app.add_handler(CallbackQueryHandler(callback_backup, pattern="^backup_"))
     app.add_handler(CallbackQueryHandler(callback_unban, pattern="^unban_"))
+    app.add_handler(CallbackQueryHandler(callback_rxblock, pattern="^rxblock_"))
     app.add_handler(CallbackQueryHandler(callback_wol, pattern="^wol_"))
     app.add_handler(CallbackQueryHandler(callback_ifacedetail, pattern="^(ifacedetail_|ifacedetailk_)"))
 

@@ -43,6 +43,7 @@ _TRAFFIC_QUERY_MIN_CONCURRENCY = 1
 _TRAFFIC_QUERY_MAX_CONCURRENCY = 3
 _BACKGROUND_LOG_FETCH_HARD_CAP = 250
 _LAST_RUNTIME_RESET_SEEN = 0.0
+_rx_anomaly_state = {}  # iface_name -> state dict untuk deteksi RX packet anomali
 
 
 def clear_runtime_state():
@@ -67,6 +68,7 @@ def clear_runtime_state():
     _ROUTER_LOG_CACHE["lines"] = []
     _alerted_hosts_traffic.clear()
     _top_bw_host_state.clear()
+    _rx_anomaly_state.clear()
     clear_checks_runtime_state()
     for key in list(_last_alerts.keys()):
         if key.startswith("traffic_"):
@@ -1332,10 +1334,294 @@ async def task_monitor_dhcp_arp():
 
 
 # ============================================
+# RX PACKET ANOMALY DETECTION ENGINE
+# Mendeteksi lonjakan RX packet/s abnormal pada interface
+# (terutama local/bridge) yang bisa jadi indikasi:
+# - Broadcast/ARP storm, device flooding
+# - IP 0.0.0.0 memakan RX packet banyak
+# ============================================
+
+def _classify_rx_anomaly_level(rx_pps):
+    """Klasifikasi level anomali berdasarkan RX packets-per-second."""
+    crit = int(max(cfg.RX_ANOMALY_CRIT_PPS, cfg.RX_ANOMALY_WARN_PPS))
+    warn = int(cfg.RX_ANOMALY_WARN_PPS)
+    if rx_pps >= crit:
+        return "critical"
+    if rx_pps >= warn:
+        return "warning"
+    return None
+
+
+def _format_pps(pps):
+    """Format packets-per-second ke satuan yang mudah dibaca."""
+    try:
+        value = float(pps or 0)
+    except (TypeError, ValueError):
+        value = 0.0
+    if value >= 1_000_000:
+        return f"{value / 1_000_000:.1f}M pps"
+    if value >= 1_000:
+        return f"{value / 1_000:.1f}K pps"
+    return f"{int(value)} pps"
+
+
+async def _identify_rx_anomaly_sources():
+    """Coba identifikasi sumber RX anomali dari top queue consumers."""
+    sources = []
+    try:
+        from mikrotik import get_top_queues
+        top = await with_timeout(
+            asyncio.to_thread(get_top_queues, 5),
+            timeout=8,
+            log_key="tasks:rx_anomaly:get_top_queues",
+            warn_every_sec=600,
+        )
+        if top:
+            for q in top[:5]:
+                if not isinstance(q, dict):
+                    continue
+                name = q.get('name', '?')
+                target = q.get('target', '')
+                rx_rate = q.get('rx_rate', 0)
+                tx_rate = q.get('tx_rate', 0)
+                if rx_rate <= 0 and tx_rate <= 0:
+                    continue
+                # Ambil IP target dari queue
+                ip = None
+                if target:
+                    raw_ip = target.split('/')[0].strip() if '/' in target else target.strip()
+                    if raw_ip:
+                        try:
+                            ipaddress.ip_address(raw_ip)
+                            ip = raw_ip
+                        except ValueError:
+                            pass
+                sources.append({
+                    'name': name,
+                    'ip': ip,
+                    'rx_rate': rx_rate,
+                    'tx_rate': tx_rate,
+                    'rx_fmt': rx_rate / 1_000_000,
+                    'tx_fmt': tx_rate / 1_000_000,
+                })
+    except Exception as e:
+        logger.debug("Gagal identifikasi sumber RX anomali: %s", e)
+
+    return sources
+
+
+def _build_rx_anomaly_alert_message(iface_name, level, rx_pps, tx_pps, rx_bps, tx_bps, hits, threshold_hits, sources):
+    """Bangun pesan alert RX anomaly."""
+    from mikrotik.queue import format_rate_bps
+
+    lvl = "CRITICAL" if level == "critical" else "WARNING"
+    emoji = "🔴" if level == "critical" else "🟡"
+
+    msg = (
+        f"{emoji} <b>[RX PACKET ANOMALY — {lvl}]</b>\n\n"
+        f"Interface: <b>{iface_name}</b>\n"
+        f"RX Packets: <b>{_format_pps(rx_pps)}</b>\n"
+        f"TX Packets: {_format_pps(tx_pps)}\n"
+        f"RX Rate: {format_rate_bps(rx_bps)}\n"
+        f"TX Rate: {format_rate_bps(tx_bps)}\n"
+        f"Threshold: Warn={_format_pps(cfg.RX_ANOMALY_WARN_PPS)} / Crit={_format_pps(cfg.RX_ANOMALY_CRIT_PPS)}\n"
+        f"Observed: {hits}x berturut-turut (threshold: {threshold_hits}x)\n\n"
+    )
+
+    if sources:
+        msg += "👥 <b>Kemungkinan Sumber:</b>\n"
+        for idx, s in enumerate(sources[:5], 1):
+            ip_info = f" ({s['ip']})" if s.get('ip') and s['ip'] != '0.0.0.0' else ""
+            rx_mb = s.get('rx_fmt', 0)
+            tx_mb = s.get('tx_fmt', 0)
+            msg += f"  {idx}. <b>{s['name']}</b>{ip_info} — RX: {rx_mb:.1f} Mbps | TX: {tx_mb:.1f} Mbps\n"
+        msg += "\n"
+    else:
+        msg += "⚠️ Tidak dapat mengidentifikasi sumber spesifik.\n\n"
+
+    msg += (
+        "<i>Kemungkinan: broadcast/ARP storm, device flooding, "
+        "loop jaringan, atau perangkat tanpa IP (0.0.0.0).</i>"
+    )
+    return msg
+
+
+def _build_rx_anomaly_recovery_message(iface_name):
+    return f"✅ <b>[RX PACKET RECOVERY] {iface_name}</b>\n\nRX Packet rate kembali normal."
+
+
+async def _run_rx_anomaly_detection(active_ifaces, traffic_results):
+    """Engine stateful untuk deteksi anomali RX Packet pada interface yang dimonitor."""
+    global _rx_anomaly_state
+    now = time.time()
+    watch_ifaces = set(getattr(cfg, 'RX_ANOMALY_WATCH_IFACE', ['local']) or ['local'])
+    consecutive_hits = max(1, int(cfg.RX_ANOMALY_CONSECUTIVE_HITS))
+    recovery_hits = max(1, int(cfg.RX_ANOMALY_RECOVERY_HITS))
+    cooldown_sec = max(0, int(cfg.RX_ANOMALY_COOLDOWN_SEC))
+
+    seen_ifaces = set()
+
+    for iface, traffic in zip(active_ifaces, traffic_results):
+        if isinstance(traffic, Exception) or not traffic:
+            continue
+
+        iface_name = str(iface.get('name', '')).strip()
+        if not iface_name:
+            continue
+
+        # Hanya monitor interface yang masuk watch list
+        if watch_ifaces and iface_name not in watch_ifaces:
+            continue
+
+        seen_ifaces.add(iface_name)
+        rx_pps = int(traffic.get('rx_pps', 0) or 0)
+        tx_pps = int(traffic.get('tx_pps', 0) or 0)
+        rx_bps = int(traffic.get('rx_bps', 0) or 0)
+        tx_bps = int(traffic.get('tx_bps', 0) or 0)
+
+        state = _rx_anomaly_state.setdefault(iface_name, {
+            "warn_hits": 0,
+            "crit_hits": 0,
+            "recovery_hits": 0,
+            "last_level": None,
+            "last_alert_ts": 0.0,
+            "last_seen_ts": 0.0,
+        })
+        state["last_seen_ts"] = now
+
+        level = _classify_rx_anomaly_level(rx_pps)
+
+        if level == "critical":
+            state["warn_hits"] += 1
+            state["crit_hits"] += 1
+            state["recovery_hits"] = 0
+
+            if state["crit_hits"] < consecutive_hits:
+                continue
+
+            is_escalation = state["last_level"] != "critical"
+            cooldown_ok = (now - float(state["last_alert_ts"])) >= cooldown_sec
+            if is_escalation or cooldown_ok:
+                sources = await _identify_rx_anomaly_sources()
+                msg = _build_rx_anomaly_alert_message(
+                    iface_name, "critical", rx_pps, tx_pps, rx_bps, tx_bps,
+                    state["crit_hits"], consecutive_hits, sources
+                )
+                # Bangun tombol block untuk sumber yang punya IP valid
+                buttons = []
+                for s in sources[:3]:
+                    ip = s.get('ip')
+                    if ip and ip != '0.0.0.0':
+                        buttons.append([
+                            InlineKeyboardButton(
+                                f"🚫 Block {s['name']} ({ip})",
+                                callback_data=f"rxblock_{ip}"
+                            )
+                        ])
+                reply_markup = InlineKeyboardMarkup(buttons) if buttons else None
+
+                for admin_id in cfg.ADMIN_IDS:
+                    try:
+                        await bot.send_message(
+                            chat_id=admin_id,
+                            text=f"🔴 [{now_timestamp()}] {msg}",
+                            parse_mode='HTML',
+                            reply_markup=reply_markup,
+                        )
+                    except Exception as send_err:
+                        logger.warning("Gagal kirim RX anomaly alert ke admin %s: %s", admin_id, send_err)
+
+                state["last_level"] = "critical"
+                state["last_alert_ts"] = now
+            continue
+
+        if level == "warning":
+            state["warn_hits"] += 1
+            state["crit_hits"] = 0
+            state["recovery_hits"] = 0
+
+            if state["warn_hits"] < consecutive_hits:
+                continue
+
+            first_warning = state["last_level"] is None
+            repeated_warning = (
+                state["last_level"] == "warning" and
+                (now - float(state["last_alert_ts"])) >= cooldown_sec
+            )
+            if first_warning or repeated_warning:
+                sources = await _identify_rx_anomaly_sources()
+                msg = _build_rx_anomaly_alert_message(
+                    iface_name, "warning", rx_pps, tx_pps, rx_bps, tx_bps,
+                    state["warn_hits"], consecutive_hits, sources
+                )
+                buttons = []
+                for s in sources[:3]:
+                    ip = s.get('ip')
+                    if ip and ip != '0.0.0.0':
+                        buttons.append([
+                            InlineKeyboardButton(
+                                f"🚫 Block {s['name']} ({ip})",
+                                callback_data=f"rxblock_{ip}"
+                            )
+                        ])
+                reply_markup = InlineKeyboardMarkup(buttons) if buttons else None
+
+                for admin_id in cfg.ADMIN_IDS:
+                    try:
+                        await bot.send_message(
+                            chat_id=admin_id,
+                            text=f"🟡 [{now_timestamp()}] {msg}",
+                            parse_mode='HTML',
+                            reply_markup=reply_markup,
+                        )
+                    except Exception as send_err:
+                        logger.warning("Gagal kirim RX anomaly warning ke admin %s: %s", admin_id, send_err)
+
+                state["last_level"] = "warning"
+                state["last_alert_ts"] = now
+            continue
+
+        # Normal/recovery path
+        state["warn_hits"] = 0
+        state["crit_hits"] = 0
+        state["recovery_hits"] += 1
+        if state["last_level"] and state["recovery_hits"] >= recovery_hits:
+            msg = _build_rx_anomaly_recovery_message(iface_name)
+            await kirim_ke_semua_admin(msg, parse_mode='HTML', severity=AlertSeverity.INFO)
+            state["last_level"] = None
+            state["last_alert_ts"] = 0.0
+
+    # Prune state interface yang sudah tidak aktif/tidak dimonitor lagi
+    for iface_name, state in list(_rx_anomaly_state.items()):
+        if iface_name in seen_ifaces:
+            continue
+        if state.get("last_level"):
+            state["warn_hits"] = 0
+            state["crit_hits"] = 0
+            state["recovery_hits"] = int(state.get("recovery_hits", 0)) + 1
+            if state["recovery_hits"] >= recovery_hits:
+                msg = _build_rx_anomaly_recovery_message(iface_name)
+                await kirim_ke_semua_admin(msg, parse_mode='HTML', severity=AlertSeverity.INFO)
+                state["last_level"] = None
+                state["last_alert_ts"] = 0.0
+        # Prune idle entries
+        last_seen_ts = float(state.get("last_seen_ts", 0.0) or 0.0)
+        if not state.get("last_level") and (now - last_seen_ts) > max(1800, cooldown_sec * 2):
+            _rx_anomaly_state.pop(iface_name, None)
+
+
+def now_timestamp():
+    """Format timestamp sekarang untuk alert message."""
+    from datetime import datetime
+    return datetime.now().strftime("%H:%M:%S")
+
+
+# ============================================
 # B10-RC1: TRAFFIC MONITOR TASK (interval: 60 detik)
 # Dipisah dari task_monitor_system agar data traffic
 # direkam 5x lebih sering -> chart jauh lebih granular
 # ============================================
+
 
 async def task_monitor_traffic():
     """Task 5: Rekam traffic metrics semua interface setiap 60 detik.
@@ -1386,6 +1672,13 @@ async def task_monitor_traffic():
             if batch:
                 await asyncio.to_thread(database.record_metrics_batch, batch)
                 logger.debug(f"Traffic: {len(batch) // 2} interface(s) direkam ke DB")
+
+            # RX Packet Anomaly Detection
+            if cfg.RX_ANOMALY_ENABLED:
+                try:
+                    await _run_rx_anomaly_detection(active_ifaces, traffic_results)
+                except Exception as rx_err:
+                    logger.debug(f"RX anomaly detection error: {rx_err}")
 
         except Exception as e:
             logger.debug(f"[ERR] Traffic Monitor: {e}")
