@@ -1454,7 +1454,8 @@ async def _run_rx_anomaly_detection(active_ifaces, traffic_results):
     """Engine stateful untuk deteksi anomali RX Packet pada interface yang dimonitor."""
     global _rx_anomaly_state
     now = time.time()
-    watch_ifaces = set(getattr(cfg, 'RX_ANOMALY_WATCH_IFACE', ['local']) or ['local'])
+    # Case-insensitive watch list agar match nama interface di router (misal LOCAL vs local)
+    watch_ifaces = {x.lower() for x in (getattr(cfg, 'RX_ANOMALY_WATCH_IFACE', ['local']) or ['local'])}
     consecutive_hits = max(1, int(cfg.RX_ANOMALY_CONSECUTIVE_HITS))
     recovery_hits = max(1, int(cfg.RX_ANOMALY_RECOVERY_HITS))
     cooldown_sec = max(0, int(cfg.RX_ANOMALY_COOLDOWN_SEC))
@@ -1469,8 +1470,8 @@ async def _run_rx_anomaly_detection(active_ifaces, traffic_results):
         if not iface_name:
             continue
 
-        # Hanya monitor interface yang masuk watch list
-        if watch_ifaces and iface_name not in watch_ifaces:
+        # Hanya monitor interface yang masuk watch list (case-insensitive)
+        if watch_ifaces and iface_name.lower() not in watch_ifaces:
             continue
 
         seen_ifaces.add(iface_name)
@@ -1674,9 +1675,27 @@ async def task_monitor_traffic():
                 logger.debug(f"Traffic: {len(batch) // 2} interface(s) direkam ke DB")
 
             # RX Packet Anomaly Detection
+            # Interface di RX watch list mungkin ada di MONITOR_IGNORE_IFACE
+            # (user ingin skip traffic recording tapi tetap deteksi anomali).
+            # Kumpulkan traffic interface tsb secara terpisah.
             if cfg.RX_ANOMALY_ENABLED:
                 try:
-                    await _run_rx_anomaly_detection(active_ifaces, traffic_results)
+                    rx_watch_set = {x.lower() for x in (getattr(cfg, 'RX_ANOMALY_WATCH_IFACE', ['local']) or ['local'])}
+                    active_names_lower = {str(i.get('name', '')).strip().lower() for i in active_ifaces}
+                    rx_extra_ifaces = [
+                        iface for iface in interfaces
+                        if iface['running']
+                        and str(iface.get('name', '')).strip().lower() in rx_watch_set
+                        and str(iface.get('name', '')).strip().lower() not in active_names_lower
+                    ]
+                    if rx_extra_ifaces:
+                        rx_extra_traffic = await _collect_interface_traffic(rx_extra_ifaces, "tasks:traffic:rx_anomaly")
+                        all_rx_ifaces = list(active_ifaces) + rx_extra_ifaces
+                        all_rx_traffic = list(traffic_results) + list(rx_extra_traffic)
+                    else:
+                        all_rx_ifaces = active_ifaces
+                        all_rx_traffic = traffic_results
+                    await _run_rx_anomaly_detection(all_rx_ifaces, all_rx_traffic)
                 except Exception as rx_err:
                     logger.debug(f"RX anomaly detection error: {rx_err}")
 
