@@ -44,6 +44,7 @@ _TRAFFIC_QUERY_MAX_CONCURRENCY = 3
 _BACKGROUND_LOG_FETCH_HARD_CAP = 250
 _LAST_RUNTIME_RESET_SEEN = 0.0
 _rx_anomaly_state = {}  # iface_name -> state dict untuk deteksi RX packet anomali
+_rx_packet_counter_cache = {}  # iface_name -> {"rx_packet": int, "tx_packet": int, "ts": float}
 
 
 def clear_runtime_state():
@@ -69,6 +70,7 @@ def clear_runtime_state():
     _alerted_hosts_traffic.clear()
     _top_bw_host_state.clear()
     _rx_anomaly_state.clear()
+    _rx_packet_counter_cache.clear()
     clear_checks_runtime_state()
     for key in list(_last_alerts.keys()):
         if key.startswith("traffic_"):
@@ -339,18 +341,19 @@ def _get_recent_interface_traffic(active_ifaces, cache_ttl=75):
     return results
 
 
-async def _collect_interface_traffic(active_ifaces, log_prefix):
+async def _collect_interface_traffic(active_ifaces, log_prefix, timeout=10):
     """Kumpulkan traffic interface dengan concurrency terbatas untuk menekan timeout."""
     if not active_ifaces:
         return []
 
     semaphore = asyncio.Semaphore(_traffic_query_concurrency())
+    effective_timeout = max(5, int(timeout))
 
     async def _fetch(iface):
         async with semaphore:
             return await with_timeout(
                 asyncio.to_thread(get_traffic, iface['name']),
-                timeout=10,
+                timeout=effective_timeout,
                 log_key=f"{log_prefix}:{iface['name']}",
                 warn_every_sec=300,
             )
@@ -1450,8 +1453,59 @@ def _build_rx_anomaly_recovery_message(iface_name):
     return f"✅ <b>[RX PACKET RECOVERY] {iface_name}</b>\n\nRX Packet rate kembali normal."
 
 
-async def _run_rx_anomaly_detection(active_ifaces, traffic_results):
-    """Engine stateful untuk deteksi anomali RX Packet pada interface yang dimonitor."""
+def _update_rx_packet_counter_cache(interfaces):
+    """Update cache packet counter dari get_interfaces() untuk fallback delta detection."""
+    now = time.time()
+    for iface in (interfaces or []):
+        name = str(iface.get('name', '')).strip()
+        if not name:
+            continue
+        _rx_packet_counter_cache[name] = {
+            "rx_packet": int(iface.get('rx_packet', 0) or 0),
+            "tx_packet": int(iface.get('tx_packet', 0) or 0),
+            "ts": now,
+        }
+
+
+def _estimate_pps_from_counter_delta(iface_name):
+    """Estimasi RX/TX pps dari delta interface packet counter antara 2 snapshot.
+
+    Return (rx_pps, tx_pps) atau None jika tidak bisa dihitung.
+    """
+    current = _rx_packet_counter_cache.get(iface_name)
+    if not current:
+        return None
+
+    prev_key = f"_prev_{iface_name}"
+    prev = _rx_packet_counter_cache.get(prev_key)
+    # Simpan current sebagai prev untuk siklus berikutnya.
+    _rx_packet_counter_cache[prev_key] = dict(current)
+
+    if not prev:
+        return None
+
+    dt = current["ts"] - prev["ts"]
+    if dt <= 0:
+        return None
+
+    rx_delta = current["rx_packet"] - prev["rx_packet"]
+    tx_delta = current["tx_packet"] - prev["tx_packet"]
+    # Counter wrap-around atau reset: abaikan.
+    if rx_delta < 0 or tx_delta < 0:
+        return None
+
+    return (int(rx_delta / dt), int(tx_delta / dt))
+
+
+async def _run_rx_anomaly_detection(active_ifaces, traffic_results, all_interfaces=None):
+    """Engine stateful untuk deteksi anomali RX Packet pada interface yang dimonitor.
+
+    Args:
+        active_ifaces: list interface yang di-query traffic-nya.
+        traffic_results: list hasil query traffic (bisa None/Exception saat timeout).
+        all_interfaces: snapshot semua interface dari get_interfaces() untuk fallback
+                        packet counter delta saat monitor-traffic timeout.
+    """
     global _rx_anomaly_state
     now = time.time()
     # Case-insensitive watch list agar match nama interface di router (misal LOCAL vs local)
@@ -1460,12 +1514,13 @@ async def _run_rx_anomaly_detection(active_ifaces, traffic_results):
     recovery_hits = max(1, int(cfg.RX_ANOMALY_RECOVERY_HITS))
     cooldown_sec = max(0, int(cfg.RX_ANOMALY_COOLDOWN_SEC))
 
+    # Update packet counter cache dari interface snapshot untuk fallback.
+    if all_interfaces:
+        _update_rx_packet_counter_cache(all_interfaces)
+
     seen_ifaces = set()
 
     for iface, traffic in zip(active_ifaces, traffic_results):
-        if isinstance(traffic, Exception) or not traffic:
-            continue
-
         iface_name = str(iface.get('name', '')).strip()
         if not iface_name:
             continue
@@ -1473,6 +1528,39 @@ async def _run_rx_anomaly_detection(active_ifaces, traffic_results):
         # Hanya monitor interface yang masuk watch list (case-insensitive)
         if watch_ifaces and iface_name.lower() not in watch_ifaces:
             continue
+
+        # Saat traffic timeout/error: pertahankan state counter, jangan reset.
+        # Tandai interface sebagai seen agar prune logic tidak mereset counter.
+        if isinstance(traffic, Exception) or not traffic:
+            seen_ifaces.add(iface_name)
+            # Fallback: estimasi pps dari interface counter delta.
+            fallback = _estimate_pps_from_counter_delta(iface_name)
+            if fallback:
+                rx_pps_est, tx_pps_est = fallback
+                level_est = _classify_rx_anomaly_level(rx_pps_est)
+                if level_est:
+                    logger.info(
+                        "[RX_ANOMALY] monitor-traffic timeout untuk %s, "
+                        "fallback counter delta: rx=%s pps, tx=%s pps → %s",
+                        iface_name, rx_pps_est, tx_pps_est, level_est,
+                    )
+                    # Gunakan estimasi counter delta sebagai proxy traffic data.
+                    traffic = {
+                        'rx_pps': rx_pps_est,
+                        'tx_pps': tx_pps_est,
+                        'rx_bps': 0,
+                        'tx_bps': 0,
+                    }
+                else:
+                    logger.debug(
+                        "[RX_ANOMALY] timeout %s, fallback counter delta normal: rx=%s tx=%s pps",
+                        iface_name, rx_pps_est, tx_pps_est,
+                    )
+                    continue
+            else:
+                # Tidak ada fallback data: pertahankan counter, skip evaluasi siklus ini.
+                logger.debug("[RX_ANOMALY] timeout %s, belum ada counter delta, state dipertahankan.", iface_name)
+                continue
 
         seen_ifaces.add(iface_name)
         rx_pps = int(traffic.get('rx_pps', 0) or 0)
@@ -1689,13 +1777,19 @@ async def task_monitor_traffic():
                         and str(iface.get('name', '')).strip().lower() not in active_names_lower
                     ]
                     if rx_extra_ifaces:
-                        rx_extra_traffic = await _collect_interface_traffic(rx_extra_ifaces, "tasks:traffic:rx_anomaly")
+                        # Timeout lebih panjang (20s) karena interface yang sedang anomali
+                        # justru paling sering menyebabkan monitor-traffic lambat.
+                        rx_extra_traffic = await _collect_interface_traffic(
+                            rx_extra_ifaces, "tasks:traffic:rx_anomaly", timeout=20
+                        )
                         all_rx_ifaces = list(active_ifaces) + rx_extra_ifaces
                         all_rx_traffic = list(traffic_results) + list(rx_extra_traffic)
                     else:
                         all_rx_ifaces = active_ifaces
                         all_rx_traffic = traffic_results
-                    await _run_rx_anomaly_detection(all_rx_ifaces, all_rx_traffic)
+                    await _run_rx_anomaly_detection(
+                        all_rx_ifaces, all_rx_traffic, all_interfaces=interfaces
+                    )
                 except Exception as rx_err:
                     logger.debug(f"RX anomaly detection error: {rx_err}")
 

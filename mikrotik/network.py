@@ -114,6 +114,8 @@ def get_interfaces():
             'actual-mtu': to_int(iface.get('actual-mtu', iface.get('mtu', 0))),
             'rx': to_int(iface.get('rx-byte', 0)),
             'tx': to_int(iface.get('tx-byte', 0)),
+            'rx_packet': to_int(iface.get('rx-packet', 0)),
+            'tx_packet': to_int(iface.get('tx-packet', 0)),
             'rx_error': to_int(iface.get('rx-error', 0)),
             'tx_error': to_int(iface.get('tx-error', 0)),
             'rx_drop': to_int(iface.get('rx-drop', 0)),
