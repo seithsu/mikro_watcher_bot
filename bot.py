@@ -501,20 +501,35 @@ async def _notify_startup(app: Application):
     transport = "API-SSL" if getattr(cfg, "MIKROTIK_USE_SSL", False) else "API"
     router_ip = str(getattr(cfg, "MIKROTIK_IP", "") or "-")
     router_port = int(getattr(cfg, "MIKROTIK_PORT", 0) or 0)
+
+    # Coba ambil device identity (MAC-based)
+    identity_line = ""
+    try:
+        from mikrotik.identity import get_router_identity_label, format_identity_line
+        identity = await asyncio.to_thread(get_router_identity_label)
+        id_text = format_identity_line(identity)
+        if id_text:
+            identity_line = f"\n{id_text}\n"
+    except Exception as e:
+        logger.debug("Startup: gagal ambil device identity: %s", e)
+
+    admin_count_text = f"({len(admin_ids)} admin)" if len(admin_ids) > 1 else ""
+
     message = (
         "✅ <b>MIKRO WATCHER ONLINE</b>\n"
         f"🏥 <b>{INSTITUTION_NAME}</b>\n\n"
         "<b>Status Startup</b>\n"
         "• Engine Telegram: <b>READY</b>\n"
         f"• Versi Bot: <code>v{BOT_VERSION}</code>\n"
-        f"• Waktu Start: <code>{started_at}</code>\n\n"
+        f"• Waktu Start: <code>{started_at}</code>\n"
+        f"{identity_line}\n"
         "<b>Koneksi Router</b>\n"
         f"• Endpoint: <code>{router_ip}:{router_port}</code>\n"
         f"• Transport: <code>{transport}</code>\n\n"
         "<b>Aksi Cepat</b>\n"
         "• <code>/start</code> buka menu utama\n"
         "• <code>/status</code> cek kondisi router\n\n"
-        "ℹ️ Bot siap menerima perintah Telegram."
+        f"ℹ️ Bot siap menerima perintah Telegram. {admin_count_text}"
     )
 
     success_count = 0

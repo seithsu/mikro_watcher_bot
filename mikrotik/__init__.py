@@ -82,3 +82,10 @@ from .tools import (
     send_wol,
     find_free_ips,
 )
+
+# -- Identity --
+from .identity import (
+    get_router_identity_label,
+    format_identity_line,
+    invalidate_identity_cache,
+)

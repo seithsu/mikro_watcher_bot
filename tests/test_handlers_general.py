@@ -1,4 +1,4 @@
-﻿# ============================================
+# ============================================
 # TEST_HANDLERS_GENERAL - Tests for handlers/general.py
 # Start, status, help, history, audit, reboot, mtlog, menu callbacks
 # ============================================
@@ -369,7 +369,7 @@ class TestDeviceHeader:
     ):
         from handlers.general import _get_device_header
 
-        rb_text, _, _, _, _, _ = await _get_device_header()
+        rb_text, _, _, _, _, _, _ = await _get_device_header()
         assert "RSIA-Palaraya" in rb_text
         assert "<b>-</b>" not in rb_text
 
@@ -391,7 +391,7 @@ class TestDeviceHeader:
     ):
         from handlers.general import _get_device_header
 
-        _, kategori, _, api_up, api_diag, state = await _get_device_header()
+        _, _, kategori, _, api_up, api_diag, state = await _get_device_header()
         assert "API UNAVAILABLE" in kategori
         assert api_up is False
         assert api_diag["last_error"] == "login failed"
@@ -456,7 +456,7 @@ class TestGeneralHelpers:
 
     @pytest.mark.asyncio
     @patch('handlers.general._get_device_header', new_callable=AsyncMock, return_value=(
-        "Device: <b>RB</b>\n", "🟢 NORMAL", 5, False, {}, {"api_connected": False}
+        "Device: <b>RB</b>\n", "", "🟢 NORMAL", 5, False, {}, {"api_connected": False}
     ))
     async def test_build_home_menu_router_disconnected(self, mock_header):
         from handlers.general import _build_home_menu
@@ -469,7 +469,7 @@ class TestGeneralHelpers:
 
     @pytest.mark.asyncio
     @patch('handlers.general._get_device_header', new_callable=AsyncMock, return_value=(
-        "Device: <b>RB</b>\n", "🟢 NORMAL", 0, True, {}, {"api_connected": True}
+        "Device: <b>RB</b>\n", "", "🟢 NORMAL", 0, True, {}, {"api_connected": True}
     ))
     async def test_build_home_menu_router_connected(self, mock_header):
         from handlers.general import _build_home_menu

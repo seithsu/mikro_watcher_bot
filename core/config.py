@@ -2,7 +2,7 @@
 # CONFIG - Konfigurasi Bot dari .env
 # ============================================
 
-BOT_VERSION = "2.3.0"
+BOT_VERSION = "2.3.1"
 
 from dotenv import load_dotenv, dotenv_values
 import os
@@ -59,6 +59,19 @@ MIKROTIK_TLS_CA_FILE = os.getenv("MIKROTIK_TLS_CA_FILE", "").strip()
 MIKROTIK_FTP_TLS = os.getenv("MIKROTIK_FTP_TLS", "True").strip().lower() in ['true', '1', 'yes']
 MIKROTIK_FTP_ALLOW_INSECURE = os.getenv("MIKROTIK_FTP_ALLOW_INSECURE", "False").strip().lower() in ['true', '1', 'yes']
 MIKROTIK_FTP_PORT = int(os.getenv("MIKROTIK_FTP_PORT", "21").strip())
+
+# Device identity mapping (MAC → Label) untuk membedakan perangkat fisik saat swap
+_mikrotik_devices_raw = os.getenv("MIKROTIK_DEVICES", "").strip()
+MIKROTIK_DEVICES = {}
+for _dev_entry in _mikrotik_devices_raw.split(","):
+    _dev_entry = _dev_entry.strip()
+    if "=" not in _dev_entry:
+        continue
+    _dev_label, _dev_mac = _dev_entry.rsplit("=", 1)
+    _dev_label = _dev_label.strip()
+    _dev_mac = _dev_mac.strip().upper()
+    if _dev_label and _dev_mac:
+        MIKROTIK_DEVICES[_dev_mac] = _dev_label
 
 # Connection tuning untuk skenario hot-swap/unstable link
 MIKROTIK_MAX_CONNECTIONS = int(os.getenv("MIKROTIK_MAX_CONNECTIONS", "12").strip())
@@ -655,7 +668,7 @@ def reload_router_env(force=False, min_interval=5):
     global TELEGRAM_CONNECT_TIMEOUT, TELEGRAM_READ_TIMEOUT, TELEGRAM_WRITE_TIMEOUT
     global TELEGRAM_POOL_TIMEOUT, TELEGRAM_GET_UPDATES_READ_TIMEOUT, TELEGRAM_CONNECTION_POOL_SIZE
     global TELEGRAM_NETWORK_LOG_WINDOW_SEC, TELEGRAM_NETWORK_LOG_COOLDOWN_SEC
-    global INSTITUTION_NAME, DHCP_POOL_SIZE
+    global INSTITUTION_NAME, DHCP_POOL_SIZE, MIKROTIK_DEVICES
     global GW_WAN, GW_INET
     global SERVERS_FALLBACK, APS_FALLBACK, CRITICAL_DEVICES_FALLBACK, CRITICAL_DEVICE_NAMES, CRITICAL_DEVICE_WINDOWS
     global MONITOR_IGNORE_IFACE
@@ -750,6 +763,21 @@ def reload_router_env(force=False, min_interval=5):
     MIKROTIK_FTP_PORT = _parse_int_range(values.get("MIKROTIK_FTP_PORT"), MIKROTIK_FTP_PORT, 1, 65535)
     BOT_IP = str(values.get("BOT_IP", BOT_IP)).strip()
     INSTITUTION_NAME = str(values.get("INSTITUTION_NAME", INSTITUTION_NAME)).strip() or INSTITUTION_NAME
+
+    # Reload device identity mapping
+    _mikrotik_devices_raw_val = str(values.get("MIKROTIK_DEVICES", "") or "").strip()
+    if _mikrotik_devices_raw_val:
+        parsed_devices = {}
+        for _dev_entry in _mikrotik_devices_raw_val.split(","):
+            _dev_entry = _dev_entry.strip()
+            if "=" not in _dev_entry:
+                continue
+            _dev_label, _dev_mac = _dev_entry.rsplit("=", 1)
+            _dev_label = _dev_label.strip()
+            _dev_mac = _dev_mac.strip().upper()
+            if _dev_label and _dev_mac:
+                parsed_devices[_dev_mac] = _dev_label
+        MIKROTIK_DEVICES = parsed_devices
 
     MIKROTIK_MAX_CONNECTIONS = _parse_int_range(
         values.get("MIKROTIK_MAX_CONNECTIONS"), MIKROTIK_MAX_CONNECTIONS, 1, 256

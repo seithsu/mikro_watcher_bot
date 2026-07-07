@@ -1,4 +1,4 @@
-﻿# ============================================
+# ============================================
 # HANDLERS/JOBS - Scheduled Background Jobs
 # Daily report dan auto-backup
 # Dipindahkan dari bot.py untuk separation of concerns
@@ -102,8 +102,20 @@ async def daily_report(context: ContextTypes.DEFAULT_TYPE):
         indibiz = next((i for i in interfaces if 'indibiz' in i['name'].lower() or 'ether1' in i['name'].lower()), None)
         local = next((i for i in interfaces if 'local' in i['name'].lower() or 'ether2' in i['name'].lower()), None)
 
+        # Device identity (MAC-based)
+        identity_line = ""
+        try:
+            from mikrotik.identity import get_router_identity_label, format_identity_line
+            dev_identity = get_router_identity_label()
+            id_line = format_identity_line(dev_identity)
+            if id_line:
+                identity_line = f"{id_line}\n"
+        except Exception as e:
+            logger.debug("Daily report: gagal ambil device identity: %s", e)
+
         pesan = (
-            f"\U0001f4cb <b>LAPORAN HARIAN \u2014 {cfg.INSTITUTION_NAME}</b>\n\n"
+            f"\U0001f4cb <b>LAPORAN HARIAN \u2014 {cfg.INSTITUTION_NAME}</b>\n"
+            f"{identity_line}\n"
             f"<b>\U0001f4e1 STATUS JARINGAN</b>\n"
             f"Kondisi: {kategori_net}\n"
         )

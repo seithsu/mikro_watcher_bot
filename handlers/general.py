@@ -1,4 +1,4 @@
-﻿import logging
+import logging
 import time
 import asyncio
 
@@ -134,6 +134,18 @@ async def _get_device_header():
         if identity:
             ros_str = f" ROS v{ros_version}" if ros_version else ""
             rb_text = f"Device: <b>{identity}</b>{ros_str}\n"
+
+    # Device identity (MAC-based label)
+    identity_text = ""
+    try:
+        from mikrotik.identity import get_router_identity_label, format_identity_line
+        dev_identity = await asyncio.to_thread(get_router_identity_label)
+        id_line = format_identity_line(dev_identity)
+        if id_line:
+            identity_text = id_line + "\n"
+    except Exception as e:
+        logger.debug("Suppressed non-fatal exception (identity): %s", e)
+
     api_diag = {"healthy": False, "last_error": ""}
     try:
         from mikrotik.connection import pool
@@ -155,7 +167,7 @@ async def _get_device_header():
     if not api_up or state.get("api_connected") is False:
         kategori = "🟠 API UNAVAILABLE (MikroTik belum connect/login)"
 
-    return rb_text, kategori, today_count, api_up, api_diag, state
+    return rb_text, identity_text, kategori, today_count, api_up, api_diag, state
 
 
 def _host_state_icon(value, api_connected=True):
@@ -204,7 +216,7 @@ def _build_api_unavailable_message(state, api_diag):
 
 async def _build_home_menu():
     """Build home menu text and keyboard. Reusable by cmd_start and callback_back_to_start."""
-    rb_text, kategori, today_count, api_up, api_diag, state = await _get_device_header()
+    rb_text, identity_text, kategori, today_count, api_up, api_diag, state = await _get_device_header()
 
     try:
         from core.config import MIKROTIK_IP
@@ -220,6 +232,7 @@ async def _build_home_menu():
     pesan = (
         f"🏠 <b>MIKRO WATCHER</b>\n"
         f"{rb_text}"
+        f"{identity_text}"
         f"{'━' * 25}\n\n"
         f"📡 Status: {kategori}\n"
         f"🔌 Router: {router_status}\n"
@@ -363,11 +376,12 @@ async def callback_menu_cat(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     # W1 FIX: Gunakan helper _get_device_header() agar tidak duplikasi kode
-    rb_text, kategori, today_count, api_up, api_diag, state = await _get_device_header()
+    rb_text, identity_text, kategori, today_count, api_up, api_diag, state = await _get_device_header()
 
     text = (
         f"🏠 <b>MIKRO WATCHER</b>\n"
         f"{rb_text}"
+        f"{identity_text}"
         f"{'━' * 25}\n\n"
         f"{cat['title']}\n"
         f"Pilih perintah:"
@@ -649,9 +663,22 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
         total_disk_mb = total_disk / (1024*1024)
 
         from core.config import INSTITUTION_NAME, BOT_IP
+
+        # Device identity (MAC-based)
+        identity_line = ""
+        try:
+            from mikrotik.identity import get_router_identity_label, format_identity_line
+            dev_identity = await asyncio.to_thread(get_router_identity_label)
+            id_line = format_identity_line(dev_identity)
+            if id_line:
+                identity_line = f"{id_line}\n"
+        except Exception as e:
+            logger.debug("Suppressed non-fatal exception (identity): %s", e)
+
         pesan = (
             f"📡 <b>LAPORAN JARINGAN — {INSTITUTION_NAME}</b>\n"
-            f"🕒 {now_str}\n\n"
+            f"🕒 {now_str}\n"
+            f"{identity_line}\n"
             f"Kondisi Umum: {kategori_net}\n\n"
             f"<b>📱 Koneksi Perangkat:</b>\n"
             f"- Router ({MIKROTIK_IP}): {up(MIKROTIK_IP)}\n"
