@@ -95,8 +95,12 @@ def cached(ttl=5, maxsize=64):
             with _lock:
                 # Evict jika cache penuh
                 if len(_entries) >= maxsize:
-                    oldest_key = min(_entries, key=lambda k: _entries[k][1])
-                    del _entries[oldest_key]
+                    try:
+                        oldest_key = min(_entries, key=lambda k: _entries[k][1])
+                        del _entries[oldest_key]
+                    except (ValueError, KeyError):
+                        # Concurrent modification — skip eviction, cache will self-correct
+                        pass
                 _entries[key] = (result, now)
 
             return result

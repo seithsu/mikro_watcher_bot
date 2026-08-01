@@ -61,7 +61,7 @@ def reset_singletons():
     try:
         from mikrotik.connection import MikroTikConnection
         MikroTikConnection._instance = None
-        MikroTikConnection._api = None
+        # NOTE: _api lives in thread-local storage (_local._api), not class-level
         MikroTikConnection._active_connections = 0
         MikroTikConnection._reset_version = 0
         MikroTikConnection._connect_fail_count = 0

@@ -7,6 +7,7 @@ import time
 import asyncio
 import logging
 import json
+import os
 
 import core.config as cfg
 from mikrotik import get_interfaces, get_system_routerboard, get_vpn_tunnels
@@ -79,7 +80,6 @@ def _save_state():
         tmp_path = str(_STATE_FILE) + '.tmp'
         with open(tmp_path, 'w') as f:
             json.dump(serializable, f)
-        import os
         os.replace(tmp_path, str(_STATE_FILE))
     except Exception as e:
         logger.debug(f"_save_state error: {e}")
@@ -417,6 +417,18 @@ async def cek_interface(interfaces=None):
             f"Cek koneksi fisik/konfigurasi!",
             parse_mode='HTML'
         )
+        # IMP-4 FIX: Rekam interface DOWN ke database agar tampil di /history & /report
+        for iface_name in newly_down:
+            try:
+                await asyncio.to_thread(
+                    database.log_incident_down,
+                    iface_name,
+                    "[WARN] Interface DOWN",
+                    f"Interface {iface_name} down terdeteksi",
+                    "interface",
+                )
+            except Exception as dbe:
+                logger.debug("Interface incident DB error: %s", dbe)
         logger.info(f"[SENT] Alert interface down: {iface_list}")
 
     recovered = _last_alerts['iface_down'] - currently_down
@@ -427,8 +439,13 @@ async def cek_interface(interfaces=None):
             f"Interface: <b>{iface_list}</b>",
             parse_mode='HTML'
         )
+        # IMP-4 FIX: Tutup incident interface di database saat recovery
+        for iface_name in recovered:
+            try:
+                await asyncio.to_thread(database.log_incident_up, iface_name)
+            except Exception as dbe:
+                logger.debug("Interface recovery DB error: %s", dbe)
         logger.info(f"[SENT] Interface recovered: {iface_list}")
 
     _last_alerts['iface_down'] = currently_down
     _save_state_if_changed(state_before)
-

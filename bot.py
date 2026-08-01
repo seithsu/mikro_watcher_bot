@@ -3,6 +3,7 @@
 # Multi-admin, rate limit, backup, daily report
 # ============================================
 
+import ipaddress
 import logging
 import time
 import os
@@ -36,6 +37,8 @@ from core.logger import catat, baca_log, format_log_pretty, rotate_log
 from core.backup import backup_semua
 from core.logging_setup import configure_root_logging
 from core.runtime_guard import install_global_exception_hooks
+from handlers.utils import get_back_button, _check_access, read_state_json
+from core import database
 
 logger = logging.getLogger(__name__)
 _default_executor = None
@@ -45,9 +48,6 @@ _TELEGRAM_GLITCH_STATE = {
     "count": 0,
     "last_log": 0.0,
 }
-
-from handlers.utils import get_back_button, _check_access, read_state_json
-from core import database
 
 # C2 FIX: _last_reboot_time dipindah ke handlers/general.py
 # Gunakan set_last_reboot_time() dari sana
@@ -378,6 +378,12 @@ async def callback_unban(update: Update, context: ContextTypes.DEFAULT_TYPE):
          return
 
     ip_target = data.replace('unban_', '')
+    try:
+        ipaddress.ip_address(ip_target)
+    except ValueError:
+        await query.answer("IP tidak valid.", show_alert=True)
+        return
+
     await query.answer("Memproses unban...")
     try:
         if unblock_ip(ip_target):
@@ -400,6 +406,12 @@ async def callback_rxblock(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     ip_target = data.replace('rxblock_', '')
+    try:
+        ipaddress.ip_address(ip_target)
+    except ValueError:
+        await query.answer("IP tidak valid.", show_alert=True)
+        return
+
     await query.answer(f"Memproses block {ip_target}...")
     try:
         from mikrotik import block_ip

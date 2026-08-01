@@ -48,7 +48,8 @@ async def daily_report(context: ContextTypes.DEFAULT_TYPE):
         try:
             dhcp_count = await asyncio.to_thread(get_dhcp_usage_count)
             dhcp_pool_size = await asyncio.to_thread(get_dhcp_pool_capacity)
-        except Exception:
+        except Exception as e:
+            logger.debug("Gagal ambil DHCP stats saat daily_report: %s", e)
             dhcp_count = 0
             dhcp_pool_size = 0
 
@@ -239,7 +240,8 @@ async def auto_backup(context: ContextTypes.DEFAULT_TYPE):
                     with open(filename, 'rb') as f:
                         await context.bot.send_document(
                             chat_id=admin_id, document=f,
-                            filename=filename, caption=pesan
+                            filename=os.path.basename(filename),  # BUG-3 FIX: basename saja
+                            caption=pesan
                         )
                 except Exception as e:
                     logger.warning("Gagal kirim auto-backup ke admin %s: %s", admin_id, e)

@@ -12,6 +12,8 @@ from core.config import LOG_MAX_SIZE, LOG_BACKUP_COUNT, DATA_DIR
 
 LOG_FILE = str(DATA_DIR / "aktivitas.log")
 logger = logging.getLogger(__name__)
+_last_rotate_check_ts = 0.0
+_ROTATE_CHECK_INTERVAL = 60  # Cek rotasi maksimal 1x per 60 detik
 
 
 # ============ LOG ROTATION ============
@@ -47,6 +49,7 @@ def rotate_log():
 
 def catat(user_id, username, perintah, status):
     """Catat setiap aktivitas ke file log."""
+    global _last_rotate_check_ts
     waktu = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     
     data = {
@@ -58,8 +61,12 @@ def catat(user_id, username, perintah, status):
     }
     
     try:
-        # Rotasi ringan saat runtime agar file aktivitas tidak terus membesar.
-        rotate_log()
+        # Throttle rotasi: cek hanya 1x per _ROTATE_CHECK_INTERVAL detik.
+        import time as _time
+        now = _time.time()
+        if (now - _last_rotate_check_ts) >= _ROTATE_CHECK_INTERVAL:
+            rotate_log()
+            _last_rotate_check_ts = now
         with open(LOG_FILE, "a", encoding="utf-8") as file:
             file.write(json.dumps(data, ensure_ascii=False) + "\n")
     except Exception as e:

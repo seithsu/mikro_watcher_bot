@@ -1,4 +1,4 @@
-﻿import logging
+import logging
 import asyncio
 import ipaddress
 
@@ -70,9 +70,21 @@ async def cmd_ping(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.callback_query:
         await update.callback_query.answer()
 
-    # Jika ada argumen, langsung ping
+    # Jika ada argumen, validasi lalu langsung ping
     if context.args:
         target = context.args[0]
+        # Validasi: harus IP valid atau hostname yang wajar
+        try:
+            ipaddress.ip_address(target)
+        except ValueError:
+            # Bukan IP — cek apakah hostname valid (alphanumeric, dot, hyphen, max 253 chars)
+            import re
+            if not re.match(r'^[a-zA-Z0-9]([a-zA-Z0-9\-\.]{0,251}[a-zA-Z0-9])?$', target):
+                await update.effective_message.reply_text(
+                    "❌ Target tidak valid. Gunakan IP address atau hostname.",
+                    reply_markup=get_back_button(),
+                )
+                return
         await _execute_ping(update, context, target)
         return
 
@@ -161,6 +173,17 @@ async def callback_ping(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     target = query.data.replace('ping_', '')
+
+    # FIND-4 FIX: Validasi target dari callback data, sama seperti cmd_ping.
+    # Callback data bisa dimanipulasi — jangan langsung percaya isinya.
+    import re as _re
+    try:
+        ipaddress.ip_address(target)
+    except ValueError:
+        if not _re.match(r'^[a-zA-Z0-9]([a-zA-Z0-9\-\.]{0,251}[a-zA-Z0-9])?$', target):
+            await query.answer("Target tidak valid.", show_alert=True)
+            return
+
     await query.answer(f"Pinging {target}...")
     await _execute_ping(update, context, target)
 
@@ -1185,21 +1208,29 @@ async def callback_clown(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         await query.answer("Memblokir internet device...")
         try:
-            await asyncio.to_thread(block_ip, pending['ip'], pending['comment'], CLOWN_LIST_NAME)
+            # FIND-6 FIX: Periksa return value block_ip setelah BUG-1 fix.
+            # True  = IP baru diblokir.
+            # False = IP sudah ada (hanya update komentar).
+            is_new = await asyncio.to_thread(block_ip, pending['ip'], pending['comment'], CLOWN_LIST_NAME)
             catat(
                 user.id,
                 user.username,
                 f"/clown block {pending['ip']}",
-                f"berhasil ({pending.get('source', '-')})",
+                f"{'berhasil (baru)' if is_new else 'sudah ada, komentar diperbarui'} ({pending.get('source', '-')})",
             )
             _clear_pending_clown_state(context)
             entries = await asyncio.to_thread(get_address_list_entries, CLOWN_LIST_NAME)
             entries.sort(key=lambda row: str(row.get('address') or ''))
             set_cache_with_ts(context.bot_data, "clown_block_entries", entries)
             text, reply_markup = _format_clown_blocked_page(entries, page=0)
+            prefix = (
+                f"✅ <b>IP {escape_html(pending['ip'])} berhasil diblok.</b>"
+                if is_new else
+                f"ℹ️ <b>IP {escape_html(pending['ip'])} sudah ada di clown-list (komentar diperbarui).</b>"
+            )
             success_text = text.replace(
                 "🤡 <b>CLOWN-LIST</b>",
-                f"✅ <b>IP {escape_html(pending['ip'])} berhasil diblok.</b>\n\n🤡 <b>CLOWN-LIST</b>",
+                f"{prefix}\n\n🤡 <b>CLOWN-LIST</b>",
                 1
             )
             await query.edit_message_text(

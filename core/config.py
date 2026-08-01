@@ -594,7 +594,11 @@ def reload_runtime_overrides(force=False, min_interval=5):
     try:
         with open(_RUNTIME_CONFIG_FILE, "r") as f:
             overrides = _json.load(f)
-    except Exception:
+    except Exception as e:
+        import logging as _logging
+        _logging.getLogger(__name__).warning(
+            "runtime_config.json corrupt atau tidak bisa dibaca: %s", e
+        )
         return True
 
     if not isinstance(overrides, dict):

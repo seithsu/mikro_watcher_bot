@@ -81,7 +81,13 @@ class TestBackupSemua:
         monkeypatch.chdir(tmp_path)
         (tmp_path / "bot.py").write_text("print('bot')", encoding="utf-8")
 
+        import core.config as cfg
         from core import backup
+
+        # BUG-5 FIX: backup sekarang disimpan ke cfg.DATA_DIR, bukan CWD.
+        # Mock DATA_DIR ke tmp_path agar test menemukan ZIP-nya.
+        monkeypatch.setattr(cfg, "DATA_DIR", tmp_path)
+        monkeypatch.setattr(backup.cfg, "DATA_DIR", tmp_path)
 
         with patch("logging.basicConfig") as basic_config:
             backup.main()

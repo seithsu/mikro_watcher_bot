@@ -1,4 +1,4 @@
-﻿# ============================================
+# ============================================
 # MIKROTIK/SYSTEM - System queries & operations
 # get_status, reboot, backup, routerboard
 # ============================================
@@ -320,7 +320,13 @@ def get_system_routerboard():
                 'serial': data.get('serial-number', 'unknown'),
                 'current_firmware': data.get('current-firmware', 'unknown'),
                 'upgrade_firmware': data.get('upgrade-firmware', 'unknown'),
-                'needs_upgrade': data.get('current-firmware', '') != data.get('upgrade-firmware', ''),
+                # BUG-4 FIX: hanya trigger upgrade jika kedua field non-kosong dan berbeda.
+                # Mencegah false positive saat RouterOS lama tidak support field ini.
+                'needs_upgrade': (
+                    bool(data.get('current-firmware', ''))
+                    and bool(data.get('upgrade-firmware', ''))
+                    and data.get('current-firmware', '') != data.get('upgrade-firmware', '')
+                ),
             })
     except Exception as e:
         logger.debug("Suppressed non-fatal exception: %s", e)

@@ -12,7 +12,7 @@ from services.runtime_reset import reset_runtime_data
 from .utils import (
     _check_access, get_back_button, append_back_button, format_bytes_auto,
     read_state_json, escape_html, generic_error_html, set_cache_with_ts, get_cache_if_fresh,
-    with_menu_timestamp
+    with_menu_timestamp, format_duration_hms
 )
 from core import database
 
@@ -828,7 +828,6 @@ async def cmd_history(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except (ValueError, IndexError):
             page = 0
 
-    import asyncio
     per_page = 10
     total = await asyncio.to_thread(database.count_all_incidents)
     total_pages = max(1, (total + per_page - 1) // per_page)
@@ -854,14 +853,7 @@ async def cmd_history(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 if durasi < 0:
                     dur_str = "Auto-closed"
                 else:
-                    m, s = divmod(durasi, 60)
-                    h, m = divmod(m, 60)
-                    if h > 0:
-                        dur_str = f"{h}h {m}m {s}s"
-                    elif m > 0:
-                        dur_str = f"{m}m {s}s"
-                    else:
-                        dur_str = f"{s}s"
+                    dur_str = format_duration_hms(durasi)
             else:
                 status = "\U0001F534"
                 dur_str = "Sedang DOWN"
@@ -916,7 +908,6 @@ async def cmd_audit(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         from mikrotik import _pool
         from mikrotik.decorators import to_bool
-        import asyncio
         
         def run_audit():
             api = _pool.get_api()

@@ -77,6 +77,10 @@ def block_ip(ip_address: str, reason: str = "auto-block", list_name: str = "auto
     """
     Memasukkan IP ke IP -> Firewall -> Address List.
     List name akan menjadi 'auto_block' secara default.
+
+    Return:
+        True  - IP baru berhasil ditambahkan ke address list.
+        False - IP sudah ada sebelumnya (hanya komentar yang diperbarui).
     """
     api = pool.get_api()
     addr_list = api.path('ip', 'firewall', 'address-list')
@@ -87,8 +91,10 @@ def block_ip(ip_address: str, reason: str = "auto-block", list_name: str = "auto
                 if e.get('address') == ip_address and e.get('list') == list_name]
 
     if existing:
+        # IP sudah ada - hanya update komentar, bukan entri baru.
+        # Return False agar caller bisa membedakan "baru diblokir" vs "sudah ada".
         addr_list.update(**{'.id': existing[0].get('.id'), 'comment': reason})
-        return True
+        return False
 
     addr_list.add(list=list_name, address=ip_address, comment=reason)
     return True

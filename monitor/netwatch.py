@@ -1,4 +1,4 @@
-﻿# ============================================
+# ============================================
 # MONITOR/NETWATCH - Network Watch (Ping, TCP, DNS)
 # Advanced matrix monitor + klasifikasi root cause
 # ============================================
@@ -29,6 +29,10 @@ from .alerts import kirim_ke_semua_admin, with_timeout, AlertSeverity, acknowled
 from core import database
 from core.runtime_reset_signal import read_runtime_reset_signal
 
+# Single source of truth — canonical implementation in monitor.utils
+from .utils import compute_sleep_with_jitter as _compute_sleep_with_jitter
+from .utils import sleep_with_jitter as _sleep_with_jitter
+
 logger = logging.getLogger(__name__)
 
 _ping_semaphore = None
@@ -58,19 +62,6 @@ _snapshot_cache = {
     "ts": 0.0,
     "value": "",
 }
-
-
-def _compute_sleep_with_jitter(interval, jitter_ratio=0.15, max_jitter=2.0):
-    """Tambah jitter positif kecil agar siklus netwatch tidak selalu sinkron."""
-    base = max(0.0, float(interval or 0))
-    spread = min(float(max_jitter), base * float(jitter_ratio))
-    if spread <= 0:
-        return base
-    return base + random.uniform(0.0, spread)
-
-
-async def _sleep_with_jitter(interval, jitter_ratio=0.15, max_jitter=2.0):
-    await asyncio.sleep(_compute_sleep_with_jitter(interval, jitter_ratio=jitter_ratio, max_jitter=max_jitter))
 
 
 def clear_runtime_state():
@@ -240,7 +231,7 @@ def _format_duration_seconds(total_seconds):
 
     parts = []
     if days:
-        parts.append(f"{days}h")
+        parts.append(f"{days}hr")  # BUG-2 FIX: 'hr' = hari, bukan jam ('j')
     if hours:
         parts.append(f"{hours}j")
     if minutes:
@@ -862,6 +853,8 @@ async def task_monitor_netwatch():
                 )
             )
 
+        except asyncio.CancelledError:
+            raise
         except Exception as e:
             logger.error(f"[ERR] Matrix Monitor: {e}")
 

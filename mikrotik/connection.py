@@ -1,4 +1,4 @@
-﻿# ============================================
+# ============================================
 # MIKROTIK/CONNECTION - Connection Pool (librouteros)
 # Thread-safe connection pool ke MikroTik
 # Setiap thread mendapat koneksi sendiri (thread-local)
@@ -48,7 +48,7 @@ class MikroTikConnection:
     _instance = None
     _local = threading.local()
     _global_lock = threading.Lock()
-    
+
     _MAX_CONNECTIONS = 5
     _active_connections = 0
     _reset_version = 0  # Incremented oleh reset_all() untuk invalidate semua thread
@@ -84,18 +84,26 @@ class MikroTikConnection:
     @classmethod
     def _register_connect_failure(cls, exc):
         """Set exponential backoff untuk menahan connect storm saat router down/swap."""
-        cls._connect_fail_count += 1
-        base = max(1, int(getattr(cfg, "MIKROTIK_RECONNECT_BASE_BACKOFF", 1)))
-        max_wait = max(base, int(getattr(cfg, "MIKROTIK_RECONNECT_MAX_BACKOFF", 30)))
-        wait = min(max_wait, base * (2 ** min(cls._connect_fail_count - 1, 6)))
-        cls._next_connect_allowed_ts = time.time() + wait
-        cls._last_connect_error = str(exc)
+        with cls._global_lock:
+            cls._connect_fail_count += 1
+            base = max(1, int(getattr(cfg, "MIKROTIK_RECONNECT_BASE_BACKOFF", 1)))
+            max_wait = max(base, int(getattr(cfg, "MIKROTIK_RECONNECT_MAX_BACKOFF", 30)))
+            wait = min(max_wait, base * (2 ** min(cls._connect_fail_count - 1, 6)))
+            cls._next_connect_allowed_ts = time.time() + wait
+            cls._last_connect_error = str(exc)
 
     @classmethod
-    def _clear_connect_backoff(cls):
+    def _clear_connect_backoff_unlocked(cls):
+        """Reset backoff state — caller MUST already hold _global_lock."""
         cls._connect_fail_count = 0
         cls._next_connect_allowed_ts = 0.0
         cls._last_connect_error = ""
+
+    @classmethod
+    def _clear_connect_backoff(cls):
+        """Reset backoff state (thread-safe, acquires _global_lock)."""
+        with cls._global_lock:
+            cls._clear_connect_backoff_unlocked()
 
     @classmethod
     def _warn_limit_throttled(cls, max_conns):
@@ -273,7 +281,8 @@ class MikroTikConnection:
                 self._reset_version += 1
                 self._last_reset_all_ts = now
                 if clear_backoff:
-                    self._clear_connect_backoff()
+                    # Gunakan versi unlocked karena _global_lock sudah di-acquire
+                    self._clear_connect_backoff_unlocked()
         self._close_local()
         if skipped:
             logger.info(

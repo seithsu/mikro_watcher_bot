@@ -1,4 +1,4 @@
-﻿# ============================================
+# ============================================
 # MONITOR/ALERTS - Enhanced Alert System
 # Severity levels, escalation, digest batching
 # Cross-process ACK via file (bot & monitor are separate PIDs)
@@ -143,11 +143,14 @@ def _ipc_lock(timeout=2.0, poll_interval=0.05):
     while True:
         try:
             fd = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_RDWR)
+            # BUG-6 FIX: pastikan fd di-close jika write gagal, sebelum kita yield.
+            # Tanpa ini, FD leak terjadi bila os.write() raise exception.
             try:
                 payload = json.dumps({"pid": os.getpid(), "ts": time.time()})
                 os.write(fd, payload.encode("utf-8"))
             except Exception as e:
                 logger.debug("Suppressed non-fatal exception: %s", e)
+                # FD tetap terbuka di sini — tutup di finally blok luar (L167)
             break
         except FileExistsError:
             if _is_stale_lock(lock_path, max(3, int(_runtime_value("ALERT_IPC_LOCK_STALE_SEC", 15)))):

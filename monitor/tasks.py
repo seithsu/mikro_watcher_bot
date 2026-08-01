@@ -268,17 +268,9 @@ async def _get_router_logs_snapshot(fetch_lines, timeout=15, cache_ttl=180):
     return None
 
 
-def _compute_sleep_with_jitter(interval, jitter_ratio=0.15, max_jitter=2.0):
-    """Tambah jitter positif kecil agar loop periodik tidak selalu sinkron."""
-    base = max(0.0, float(interval or 0))
-    spread = min(float(max_jitter), base * float(jitter_ratio))
-    if spread <= 0:
-        return base
-    return base + random.uniform(0.0, spread)
-
-
-async def _sleep_with_jitter(interval, jitter_ratio=0.15, max_jitter=2.0):
-    await asyncio.sleep(_compute_sleep_with_jitter(interval, jitter_ratio=jitter_ratio, max_jitter=max_jitter))
+# Single source of truth — canonical implementation in monitor.utils
+from .utils import compute_sleep_with_jitter as _compute_sleep_with_jitter
+from .utils import sleep_with_jitter as _sleep_with_jitter
 
 
 async def _pause_if_api_unavailable(task_name, interval, cache_ttl=5, log_every_sec=300):
@@ -648,8 +640,9 @@ async def task_monitor_system():
                     else:
                         _last_alerts[f"traffic_{iface['name']}"] = False
 
+        except asyncio.CancelledError:
+            raise
         except Exception as e:
-            logger.error(f"[ERR] System Monitor: {e}")
             now = time.time()
             if now - _last_error_alert_time >= _ERROR_ALERT_COOLDOWN:
                 await kirim_ke_semua_admin(
@@ -715,6 +708,7 @@ async def task_monitor_resources():
 # ============ PER-HOST TRAFFIC LEAK DETECTION ============
 
 _alerted_hosts_traffic = set()  # Tracking host yang sudah di-alert traffic leak
+_ALERTED_HOSTS_TRAFFIC_MAX = 2000  # FIND-1 FIX: cap agar tidak memory leak di legacy mode
 _top_bw_host_state = {}         # host -> state dict (engine top bandwidth baru)
 
 
@@ -1022,6 +1016,14 @@ async def _cek_per_host_traffic(queue_list):
         else:
             _alerted_hosts_traffic.discard(name)
 
+    # FIND-1 FIX: Batas ukuran _alerted_hosts_traffic agar tidak memory leak di legacy mode
+    if len(_alerted_hosts_traffic) > _ALERTED_HOSTS_TRAFFIC_MAX:
+        try:
+            evict = set(list(_alerted_hosts_traffic)[:len(_alerted_hosts_traffic) - _ALERTED_HOSTS_TRAFFIC_MAX])
+            _alerted_hosts_traffic.difference_update(evict)
+        except Exception:
+            pass
+
 
 async def _record_top_queue_metrics_and_alerts():
     """Rekam top queue metrics dan evaluasi alert bandwidth per-host."""
@@ -1078,6 +1080,7 @@ async def task_monitor_logs():
         _seen_set.add(uid)
 
     bruteforce_tracker = {}
+    _BRUTEFORCE_TRACKER_TTL = int(getattr(cfg, "BRUTEFORCE_TRACKER_TTL_SEC", 600))  # default 10 menit
 
     # Init: baseline
     try:
@@ -1113,20 +1116,14 @@ async def task_monitor_logs():
 
             new_logs = []
 
-            # Cleanup tracker brute force > 60 detik
             now = time.time()
-            for ip in list(bruteforce_tracker.keys()):
-                 if now - bruteforce_tracker[ip]['last_seen'] > 60:
-                       del bruteforce_tracker[ip]
-
             # B2 FIX: Cleanup power events expired (lebih dari 5 menit)
-            now_t = time.time()
-            _power_events_sent_cleanup = {u: t for u, t in _power_events_sent.items() if now_t - t < _POWER_EVENT_TTL}
+            _power_events_sent_cleanup = {u: t for u, t in _power_events_sent.items() if now - t < _POWER_EVENT_TTL}
             _power_events_sent.clear()
             _power_events_sent.update(_power_events_sent_cleanup)
             _api_account_last_sent = {
                 sig: ts for sig, ts in _api_account_last_sent.items()
-                if (now_t - ts) < _api_account_dedup_window
+                if (now - ts) < _api_account_dedup_window
             }
             trusted_autoblock_ips = _get_autoblock_trusted_ips()
 
@@ -1145,7 +1142,7 @@ async def task_monitor_logs():
                         cfg.BOT_IP,
                         _api_account_last_sent,
                         _api_account_dedup_window,
-                        now_t,
+                        now,
                         bot_usernames=_api_skip_users,
                     ):
                         _add_seen(uid)
@@ -1170,7 +1167,7 @@ async def task_monitor_logs():
                                 if bruteforce_tracker[ip_part]['count'] >= threshold:
                                     try:
                                         await asyncio.to_thread(block_ip, ip_part, f"Auto Blocked by Bot (Bruteforce)")
-                                        del bruteforce_tracker[ip_part]
+                                        bruteforce_tracker.pop(ip_part, None)  # Bersihkan setelah diblokir
 
                                         # W6 FIX: Audit ke database agar ada trace permanen
                                         try:
@@ -1230,6 +1227,17 @@ async def task_monitor_logs():
 
                     _add_seen(uid)
 
+            # FIND-5 FIX: Prune bruteforce_tracker entries yang sudah expired (TTL-based).
+            # Mencegah memory leak saat ribuan IP mencoba tapi tidak pernah capai threshold.
+            _BRUTEFORCE_TRACKER_TTL = int(getattr(cfg, "BRUTEFORCE_TRACKER_TTL_SEC", 600))
+            expired_ips = [
+                ip for ip, state in list(bruteforce_tracker.items())
+                if (now - float(state.get('last_seen', now))) > _BRUTEFORCE_TRACKER_TTL
+            ]
+            for ip in expired_ips:
+                bruteforce_tracker.pop(ip, None)
+                logger.debug("[bruteforce_tracker] Entry expired (TTL=%ss) di-prune: %s", _BRUTEFORCE_TRACKER_TTL, ip)
+
             # Kirim alert log umum
             if new_logs:
                 chunks = _build_router_log_chunks(new_logs)
@@ -1242,8 +1250,10 @@ async def task_monitor_logs():
                             logger.warning("Gagal forward log router ke admin %s: %s", admin_id, send_err)
                 logger.debug(f"Forwarded {len(new_logs)} log entries")
 
+        except asyncio.CancelledError:
+            raise
         except Exception as e:
-            logger.error(f"[ERR] Log Monitor: {e}")
+            logger.error(f"[ERR] Task Log Monitor: {e}")
 
         await _sleep_with_jitter(interval)
 
@@ -1330,8 +1340,10 @@ async def task_monitor_dhcp_arp():
                         await asyncio.to_thread(database.log_incident_up, ip)
                         open_conflict_incidents.remove(ip)
 
+        except asyncio.CancelledError:
+            raise
         except Exception as e:
-            logger.error(f"[ERR] DHCP/ARP Monitor: {e}")
+            logger.error(f"[ERR] Task DHCP/ARP Monitor: {e}")
 
         await _sleep_with_jitter(interval, max_jitter=1.0)
 
@@ -1793,8 +1805,10 @@ async def task_monitor_traffic():
                 except Exception as rx_err:
                     logger.debug(f"RX anomaly detection error: {rx_err}")
 
+        except asyncio.CancelledError:
+            raise
         except Exception as e:
-            logger.debug(f"[ERR] Traffic Monitor: {e}")
+            logger.error(f"[ERR] Task Traffic Monitor: {e}")
 
         await _sleep_with_jitter(_TRAFFIC_INTERVAL)
 
@@ -1818,8 +1832,10 @@ async def task_monitor_top_bandwidth():
                     await _record_top_queue_metrics_and_alerts()
                 except Exception as eq:
                     logger.debug(f"Top queue metrics error: {eq}")
+        except asyncio.CancelledError:
+            raise
         except Exception as e:
-            logger.debug(f"[ERR] Top BW Monitor: {e}")
+            logger.error(f"[ERR] Task Top BW Monitor: {e}")
 
         await _sleep_with_jitter(interval)
 
@@ -1834,7 +1850,9 @@ async def task_monitor_alert_maintenance():
             cfg.reload_runtime_overrides(min_interval=10)
             await check_escalation()
             await send_digest()
+        except asyncio.CancelledError:
+            raise
         except Exception as e:
-            logger.warning(f"Alert maintenance error: {e}")
+            logger.error(f"[ERR] Task Alert Maintenance: {e}")
         await _sleep_with_jitter(interval)
 

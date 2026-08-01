@@ -90,7 +90,7 @@ class TestAlertTimestamp:
         assert _format_duration_seconds(0) == "0s"
         assert _format_duration_seconds(65) == "1m 5s"
         assert _format_duration_seconds(3661) == "1j 1m 1s"
-        assert _format_duration_seconds(90061) == "1h 1j 1m 1s"
+        assert _format_duration_seconds(90061) == "1hr 1j 1m 1s"  # BUG-2 FIX: 'hr' = hari
 
 
 def test_host_fail_threshold_prefers_override(monkeypatch):

@@ -25,9 +25,9 @@ def _get_conn():
     
     Setiap koneksi otomatis di-close setelah selesai.
     Timeout 10 detik untuk menghindari 'database is locked'.
+    WAL mode diset sekali di _init_db() karena bersifat persistent.
     """
     conn = sqlite3.connect(DB_PATH, timeout=10)
-    conn.execute('PRAGMA journal_mode=WAL')
     try:
         yield conn
     finally:
@@ -37,6 +37,8 @@ def _get_conn():
 def _init_db():
     """Inisialisasi schema database."""
     with _get_conn() as conn:
+        # WAL mode bersifat persistent — cukup diset sekali saat init.
+        conn.execute('PRAGMA journal_mode=WAL')
         c = conn.cursor()
         
         # Tabel utama: incidents
@@ -633,44 +635,68 @@ def get_report(days=7, tag_filter=None):
         c = conn.cursor()
         cutoff = (datetime.now() - timedelta(days=days)).isoformat()
         
-        # Base query
         if tag_filter:
-            where_clause = "WHERE waktu_down >= ? AND tag = ?"
-            params_count = (cutoff, tag_filter)
-            params_detail = (cutoff, tag_filter)
+            # Total incidents
+            c.execute(
+                "SELECT COUNT(*) FROM incidents WHERE waktu_down >= ? AND tag = ?",
+                (cutoff, tag_filter)
+            )
+            total = c.fetchone()[0]
+
+            # MTTR (Mean Time To Recovery)
+            c.execute(
+                "SELECT AVG(durasi_detik) FROM incidents "
+                "WHERE waktu_down >= ? AND tag = ? AND durasi_detik IS NOT NULL AND durasi_detik >= 0",
+                (cutoff, tag_filter)
+            )
+            avg_recovery = c.fetchone()[0] or 0
+
+            # Per-host summary
+            c.execute(
+                "SELECT host, COUNT(*) as cnt, "
+                "SUM(CASE WHEN durasi_detik IS NOT NULL AND durasi_detik >= 0 THEN durasi_detik ELSE 0 END) as total_down, "
+                "AVG(CASE WHEN durasi_detik IS NOT NULL AND durasi_detik >= 0 THEN durasi_detik END) as avg_down "
+                "FROM incidents WHERE waktu_down >= ? AND tag = ? GROUP BY host ORDER BY cnt DESC",
+                (cutoff, tag_filter)
+            )
+            host_rows = c.fetchall()
+
+            # Per-tag breakdown
+            c.execute(
+                "SELECT COALESCE(tag, 'untagged') as t, COUNT(*) FROM incidents "
+                "WHERE waktu_down >= ? AND tag = ? GROUP BY t ORDER BY COUNT(*) DESC",
+                (cutoff, tag_filter)
+            )
+            tag_rows = c.fetchall()
         else:
-            where_clause = "WHERE waktu_down >= ?"
-            params_count = (cutoff,)
-            params_detail = (cutoff,)
-        
-        # Total incidents
-        c.execute(f"SELECT COUNT(*) FROM incidents {where_clause}", params_count)
-        total = c.fetchone()[0]
-        
-        # MTTR (Mean Time To Recovery)
-        c.execute(
-            f"SELECT AVG(durasi_detik) FROM incidents {where_clause} "
-            f"AND durasi_detik IS NOT NULL AND durasi_detik >= 0",
-            params_detail
-        )
-        avg_recovery = c.fetchone()[0] or 0
-        
-        # Per-host summary
-        c.execute(
-            f"SELECT host, COUNT(*) as cnt, "
-            f"SUM(CASE WHEN durasi_detik IS NOT NULL AND durasi_detik >= 0 THEN durasi_detik ELSE 0 END) as total_down, "
-            f"AVG(CASE WHEN durasi_detik IS NOT NULL AND durasi_detik >= 0 THEN durasi_detik END) as avg_down "
-            f"FROM incidents {where_clause} GROUP BY host ORDER BY cnt DESC",
-            params_detail
-        )
-        host_rows = c.fetchall()
-        
-        # Per-tag breakdown
-        c.execute(
-            f"SELECT COALESCE(tag, 'untagged') as t, COUNT(*) FROM incidents {where_clause} GROUP BY t ORDER BY COUNT(*) DESC",
-            params_detail
-        )
-        tag_rows = c.fetchall()
+            c.execute(
+                "SELECT COUNT(*) FROM incidents WHERE waktu_down >= ?",
+                (cutoff,)
+            )
+            total = c.fetchone()[0]
+
+            c.execute(
+                "SELECT AVG(durasi_detik) FROM incidents "
+                "WHERE waktu_down >= ? AND durasi_detik IS NOT NULL AND durasi_detik >= 0",
+                (cutoff,)
+            )
+            avg_recovery = c.fetchone()[0] or 0
+
+            c.execute(
+                "SELECT host, COUNT(*) as cnt, "
+                "SUM(CASE WHEN durasi_detik IS NOT NULL AND durasi_detik >= 0 THEN durasi_detik ELSE 0 END) as total_down, "
+                "AVG(CASE WHEN durasi_detik IS NOT NULL AND durasi_detik >= 0 THEN durasi_detik END) as avg_down "
+                "FROM incidents WHERE waktu_down >= ? GROUP BY host ORDER BY cnt DESC",
+                (cutoff,)
+            )
+            host_rows = c.fetchall()
+
+            c.execute(
+                "SELECT COALESCE(tag, 'untagged') as t, COUNT(*) FROM incidents "
+                "WHERE waktu_down >= ? GROUP BY t ORDER BY COUNT(*) DESC",
+                (cutoff,)
+            )
+            tag_rows = c.fetchall()
         
         # Format
         hosts_data = []

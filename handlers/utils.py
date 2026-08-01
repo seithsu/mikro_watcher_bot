@@ -1,12 +1,14 @@
 import time
 import uuid
 import logging
+import threading
 from datetime import datetime
 from html import escape as _html_escape
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 import core.config as cfg
 from core.logger import catat
+from mikrotik.decorators import format_bytes as format_bytes_auto
 
 logger = logging.getLogger(__name__)
 
@@ -80,40 +82,44 @@ def append_back_button(reply_markup, back_to=None):
 # ============ RATE LIMITER ============
 
 class RateLimiter:
-    """Rate limiter sederhana per-user, per-menit."""
+    """Rate limiter sederhana per-user, per-menit. Thread-safe."""
 
     def __init__(self, max_per_minute):
         self._max = max_per_minute
         self._requests = {}  # {user_id: [timestamp, ...]}
         self._last_cleanup = time.time()
+        self._lock = threading.Lock()
 
     def is_allowed(self, user_id):
         """Cek apakah user masih boleh request."""
         now = time.time()
-        
-        # Global cleanup tiap 1 jam untuk GC user idle
-        if now - self._last_cleanup > 3600:
-            self._cleanup_idle_users(now)
-            self._last_cleanup = now
-            
-        cutoff = now - 60
 
-        if user_id not in self._requests:
-            self._requests[user_id] = []
+        with self._lock:
+            # Global cleanup tiap 1 jam untuk GC user idle
+            if now - self._last_cleanup > 3600:
+                self._cleanup_idle_users(now)
+                self._last_cleanup = now
 
-        # Hapus request lama
-        self._requests[user_id] = [
-            t for t in self._requests[user_id] if t > cutoff
-        ]
+            cutoff = now - 60
 
-        if len(self._requests[user_id]) >= self._max:
-            return False
+            if user_id not in self._requests:
+                self._requests[user_id] = []
 
-        self._requests[user_id].append(now)
-        return True
+            # Hapus request lama
+            self._requests[user_id] = [
+                t for t in self._requests[user_id] if t > cutoff
+            ]
+
+            if len(self._requests[user_id]) >= self._max:
+                return False
+
+            self._requests[user_id].append(now)
+            return True
 
     def _cleanup_idle_users(self, now):
-        """Hapus user yang tidak beraktivitas lebih dari 10 menit (600s) dari memory."""
+        """Hapus user yang tidak beraktivitas lebih dari 10 menit (600s) dari memory.
+
+        Caller harus sudah memegang self._lock."""
         idle_cutoff = now - 600
         active_users = {}
         for uid, reqs in self._requests.items():
@@ -132,25 +138,42 @@ def cek_admin(user_id):
     """Cek apakah user adalah admin yang sah (multi-admin)."""
     return user_id in getattr(cfg, "ADMIN_IDS", [])
 
-def format_bytes_auto(bytes_val):
-    """Format bytes ke satuan yang sesuai (B, KB, MB, GB, dll)."""
-    if bytes_val < 1024:
-        return f"{bytes_val} B"
-    elif bytes_val < 1024**2:
-        return f"{bytes_val/1024:.1f} KB"
-    elif bytes_val < 1024**3:
-        return f"{bytes_val/(1024**2):.1f} MB"
-    else:
-        return f"{bytes_val/(1024**3):.2f} GB"
+# format_bytes_auto diimpor dari mikrotik.decorators.format_bytes (canonical source)
+# Menghindari duplikasi logika yang identik.
 
 def _format_bytes(bytes_val):
-    """Alias untuk format_bytes_auto."""
+    """Alias untuk format_bytes_auto (canonical source: mikrotik.decorators.format_bytes)."""
     return format_bytes_auto(bytes_val)
 
 
+def format_duration_hms(seconds):
+    """Format durasi detik ke string 'Xh Xm Xs' yang human-readable.
+
+    Single source of truth — dipakai oleh cmd_history, daily report, dll.
+    """
+    seconds = max(0, int(seconds or 0))
+    m, s = divmod(seconds, 60)
+    h, m = divmod(m, 60)
+    if h > 0:
+        return f"{h}h {m}m {s}s"
+    elif m > 0:
+        return f"{m}m {s}s"
+    return f"{s}s"
+
+
 def escape_html(value):
-    """Escape aman untuk field dinamis pada parse_mode='HTML'."""
+    """Escape aman untuk field dinamis pada parse_mode='HTML' (body text)."""
     return _html_escape(str(value), quote=False)
+
+
+def escape_html_attr(value):
+    """Escape aman untuk nilai di dalam atribut HTML (quote=True).
+
+    Gunakan ini saat value disisipkan di atribut tag, misalnya
+    <a href="..."> atau <img alt="...">.
+    Untuk teks biasa dalam body, gunakan escape_html().
+    """
+    return _html_escape(str(value), quote=True)
 
 
 def generic_error_html(prefix=None):
@@ -221,6 +244,11 @@ def format_interface_list(interfaces):
     return text
 
 
+_unknown_user_notified = set()  # Track unknown user_ids yang sudah dinotifikasi
+_UNKNOWN_USER_NOTIFIED_MAX = 5000   # IMP-7: cap agar tidak tumbuh tanpa batas
+_UNKNOWN_USER_NOTIFIED_EVICT = 1000  # Buang sejumlah ini saat cap tercapai
+
+
 async def _check_access(update, user, command):
     """Helper: cek admin + rate limit. Return True jika ditolak."""
     # Sync runtime override (shared file) agar proses bot ikut nilai terbaru.
@@ -239,6 +267,42 @@ async def _check_access(update, user, command):
 
     if not cek_admin(user.id):
         catat(user.id, user.username, command, "ditolak-bukan-admin")
+        logger.warning(
+            "[SEC] Akses ditolak: user_id=%s username=%s command=%s",
+            user.id, user.username or "?", command,
+        )
+        # Notifikasi admin saat ada user tidak dikenal mencoba akses (1x per user per session)
+        if user.id not in _unknown_user_notified:
+            # IMP-7 FIX: Jaga ukuran set agar tidak memory leak saat flood attack
+            if len(_unknown_user_notified) >= _UNKNOWN_USER_NOTIFIED_MAX:
+                try:
+                    evict = set(list(_unknown_user_notified)[:_UNKNOWN_USER_NOTIFIED_EVICT])
+                    _unknown_user_notified.difference_update(evict)
+                    logger.debug("_unknown_user_notified evicted %d entries.", len(evict))
+                except Exception:
+                    pass
+            _unknown_user_notified.add(user.id)
+            try:
+                from telegram import Bot
+                _notify_bot = Bot(token=cfg.TOKEN)
+                for admin_id in getattr(cfg, "ADMIN_IDS", []):
+                    try:
+                        await _notify_bot.send_message(
+                            chat_id=admin_id,
+                            text=(
+                                f"🚨 <b>AKSES TIDAK SAH TERDETEKSI</b>\n\n"
+                                f"User: <code>{user.id}</code>\n"
+                                f"Username: @{user.username or '?'}\n"
+                                f"Nama: {user.first_name or ''} {user.last_name or ''}\n"
+                                f"Command: <code>{command}</code>\n\n"
+                                f"<i>User ini bukan admin yang terdaftar.</i>"
+                            ),
+                            parse_mode='HTML',
+                        )
+                    except Exception:
+                        pass
+            except Exception:
+                pass
         await send_warning("[DENIED] Akses ditolak!")
         return True
 

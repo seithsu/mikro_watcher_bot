@@ -139,7 +139,9 @@ class TestFirewallModule:
             [{".id": "*A", "address": "192.168.3.3", "list": "auto_block"}]
         )
 
-        assert block_ip("192.168.3.3", "manual", "auto_block") is True
+        # BUG-1 FIX: return False saat IP sudah ada (hanya update komentar).
+        # Caller bisa bedakan "baru diblokir" (True) vs "sudah ada" (False).
+        assert block_ip("192.168.3.3", "manual", "auto_block") is False
         addr_list.update.assert_called_once_with(**{".id": "*A", "comment": "manual"})
         addr_list.add.assert_not_called()
 
