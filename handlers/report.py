@@ -1,4 +1,4 @@
-﻿# ============================================
+# ============================================
 # HANDLERS/REPORT - Report & Bandwidth Commands
 # /report, /bandwidth
 # ============================================
@@ -103,11 +103,19 @@ async def callback_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     data = query.data  # report_7, report_30, report_7_server, etc.
-    
-    parts = data.replace("report_", "").split("_")
-    days = int(parts[0])
-    tag_filter = parts[1] if len(parts) > 1 else None
-    
+
+    # FIND-8 FIX: Validasi days dari callback data sebelum cast ke int.
+    # Callback data bisa rusak/dimanipulasi — tangkap ValueError agar tidak crash.
+    try:
+        parts = data.replace("report_", "").split("_")
+        days = int(parts[0])
+        if days <= 0 or days > 365:
+            raise ValueError(f"days out of range: {days}")
+        tag_filter = parts[1] if len(parts) > 1 else None
+    except (ValueError, IndexError):
+        await query.answer("Data laporan tidak valid.", show_alert=True)
+        return
+
     await query.answer()
     try:
         await query.message.edit_text(f"⏳ <i>Generating report {days} hari...</i>", parse_mode='HTML')

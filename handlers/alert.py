@@ -1,6 +1,7 @@
 import logging
 import os
 import time
+import asyncio
 
 from telegram import Update
 from telegram.ext import ContextTypes
@@ -44,21 +45,27 @@ async def cmd_mute(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Perintah /mute - Mencegah pesan Alert dari monitor selama interval tertentu."""
     user = update.effective_user
     if await _check_access(update, user, "/mute"): return
-    
+
+    _MUTE_MAX_MINUTES = 1440  # FIND-11 FIX: batas maksimum 24 jam
     minutes = 60
     if context.args:
         try:
             minutes = int(context.args[0])
         except ValueError:
             pass
-            
+
+    # Clamp ke batas aman
+    if minutes < 1:
+        minutes = 1
+    elif minutes > _MUTE_MAX_MINUTES:
+        minutes = _MUTE_MAX_MINUTES
+
     expiry = time.time() + (minutes * 60)
-    
+
     def _write_lock():
         with open(_MUTE_FILE, "w") as f:
             f.write(str(expiry))
-    
-    import asyncio
+
     await asyncio.to_thread(_write_lock)
         
     pesan = f"🔇 <b>GLOBAL MUTE AKTIF</b>\n\nBot tidak akan mengirim Notifikasi Alert DOWN/UP maupun Anomaly DHCP selama <b>{minutes} menit</b> ke depan. Gunakan perintah ini saat sedang melakukan Maintenance Terencana.\n\nKetik /unmute untuk membatalkan."
@@ -78,12 +85,11 @@ async def cmd_unmute(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Perintah /unmute - Membatalkan Status Mute."""
     user = update.effective_user
     if await _check_access(update, user, "/unmute"): return
-    
+
     def _remove_lock():
         if _MUTE_FILE.exists():
             _MUTE_FILE.unlink(missing_ok=True)
-            
-    import asyncio
+
     await asyncio.to_thread(_remove_lock)
         
     pesan = "🔊 <b>GLOBAL MUTE DICABUT</b>\n\nNotifikasi Alert kembali normal."

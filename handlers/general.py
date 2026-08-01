@@ -1166,7 +1166,14 @@ async def cmd_mtlog(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except Exception as e:
                 logger.debug("Suppressed non-fatal exception: %s", e)
         import asyncio
-        logs = await asyncio.to_thread(get_mikrotik_log, 200)
+        # FIND-12 FIX: Cache raw logs agar tidak re-fetch setiap kali filter diubah.
+        # TTL 3 menit — cukup fresh untuk monitoring, hemat API call ke router.
+        _RAW_LOG_CACHE_TTL = 180
+        logs = get_cache_if_fresh(context.bot_data, "mtlog_raw", ttl_seconds=_RAW_LOG_CACHE_TTL)
+        if logs is None:
+            logs = await asyncio.to_thread(get_mikrotik_log, 200)
+            if logs is not None:
+                set_cache_with_ts(context.bot_data, "mtlog_raw", logs)
 
         if not logs:
             text = with_menu_timestamp("ℹ️ Log MikroTik kosong.")
