@@ -1,4 +1,4 @@
-﻿# ============================================
+# ============================================
 # HANDLERS/CHARTS - Chart Command Handler
 # /chart - Menampilkan grafik monitoring via Telegram
 # ============================================
@@ -54,7 +54,8 @@ _CHART_MENU_TEXT = (
     "📊 <b>DHCP</b> — Tren pemakaian pool (6h/24h)\n\n"
     "⏱️ <i>Traffic chart inject data live saat dibuka.</i>"
 )
-_CHART_MENU_TEXT = with_menu_timestamp(_CHART_MENU_TEXT)
+# FIND-18 FIX: Jangan bake timestamp di module-level — terapkan fresh saat handler dipanggil.
+# Dulu: _CHART_MENU_TEXT = with_menu_timestamp(_CHART_MENU_TEXT)  ← stale jika bot lama running
 
 
 # ============ LIVE TRAFFIC INJECT (B10-RC3) ============
@@ -112,15 +113,16 @@ async def cmd_chart(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     keyboard = _get_chart_keyboard()
     reply_markup = InlineKeyboardMarkup(keyboard)
+    chart_menu_text = with_menu_timestamp(_CHART_MENU_TEXT)
 
     if update.callback_query:
         await update.callback_query.answer()
         await update.callback_query.edit_message_text(
-            text=_CHART_MENU_TEXT, parse_mode='HTML', reply_markup=reply_markup
+            text=chart_menu_text, parse_mode='HTML', reply_markup=reply_markup
         )
     else:
         await update.message.reply_text(
-            text=_CHART_MENU_TEXT, parse_mode='HTML', reply_markup=reply_markup
+            text=chart_menu_text, parse_mode='HTML', reply_markup=reply_markup
         )
 
     catat(user.id, user.username, "/chart", "berhasil")
@@ -272,8 +274,8 @@ async def callback_chart(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     [InlineKeyboardButton("🔙 Kembali", callback_data="cmd_chart")],
                 ])
             )
-        except Exception as e:
-            logger.debug("Suppressed non-fatal exception: %s", e)
+        except Exception as e2:  # FIND-19 FIX: jangan shadow variabel e asli
+            logger.debug("Suppressed non-fatal exception: %s", e2)
 async def callback_back_to_chart(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle kembali ke chart menu dari foto chart."""
     query = update.callback_query
@@ -290,7 +292,7 @@ async def callback_back_to_chart(update: Update, context: ContextTypes.DEFAULT_T
         logger.debug("Suppressed non-fatal exception: %s", e)
     await context.bot.send_message(
         chat_id=chat_id,
-        text=_CHART_MENU_TEXT,
+        text=with_menu_timestamp(_CHART_MENU_TEXT),
         parse_mode='HTML',
         reply_markup=InlineKeyboardMarkup(_get_chart_keyboard())
     )

@@ -1,4 +1,5 @@
-﻿import logging
+import logging
+import asyncio
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
@@ -104,15 +105,29 @@ async def callback_queue(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if await _check_access(update, user, "callback_queue"):
         return
 
+
+async def callback_queue(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle callback interaktif queue (List, View, Del)."""
+    query = update.callback_query
+    user = query.from_user
+
+    if await _check_access(update, user, "callback_queue"):
+        return
+
     await query.answer()
     data = query.data.split("|")
     action = data[0]
     
     try:
         if action == "q_list":
-            page = int(data[1])
-            import asyncio
+            # FIND-16 FIX: Validasi page dari callback data agar tidak crash pada data tidak valid.
+            try:
+                page = int(data[1])
+            except (ValueError, IndexError):
+                await query.answer("Data navigasi tidak valid.", show_alert=True)
+                return
             queues = await asyncio.to_thread(get_simple_queues)
+
             reply_markup = _get_queue_keyboard(queues, page=page)
             # When inside callback_queue (navigating pages) we SHOULD edit the message, but we still append back button
             await query.edit_message_text(
@@ -123,7 +138,6 @@ async def callback_queue(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
         elif action == "q_view":
             queue_id = data[1]
-            import asyncio
             queues = await asyncio.to_thread(get_simple_queues)
             
             # Cari queue by ID (baik 'id' maupun '.id')
@@ -157,7 +171,6 @@ async def callback_queue(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
         elif action == "q_del":
             queue_id = data[1]
-            import asyncio
             queues = await asyncio.to_thread(get_simple_queues)
             target_q = next((q for q in queues if str(q.get('id') or q.get('.id')) == queue_id), None)
             if not target_q:
@@ -187,9 +200,7 @@ async def callback_queue(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         elif action == "q_delexec":
             queue_id = data[1]
-            import asyncio
             await asyncio.to_thread(remove_simple_queue, queue_id)
-            
             # Balik ke list page 0 setelah hapus
             queues = await asyncio.to_thread(get_simple_queues)
             if not queues:
