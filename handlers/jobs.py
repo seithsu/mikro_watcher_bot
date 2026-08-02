@@ -107,7 +107,9 @@ async def daily_report(context: ContextTypes.DEFAULT_TYPE):
         identity_line = ""
         try:
             from mikrotik.identity import get_router_identity_label, format_identity_line
-            dev_identity = get_router_identity_label()
+            # FIND-20 FIX: Gunakan asyncio.to_thread agar konsisten dengan cmd_status di general.py.
+            # get_router_identity_label() bisa melakukan blocking API call saat cache stale.
+            dev_identity = await asyncio.to_thread(get_router_identity_label)
             id_line = format_identity_line(dev_identity)
             if id_line:
                 identity_line = f"{id_line}\n"
