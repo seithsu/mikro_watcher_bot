@@ -169,7 +169,8 @@ async def _dns_check(domains=None, timeout=3):
         except Exception as e:
             logger.debug("Suppressed non-fatal exception: %s", e)
         try:
-            loop = asyncio.get_event_loop()
+            # FIND-21 FIX: Gunakan get_running_loop() — get_event_loop() deprecated di Python 3.10+
+            loop = asyncio.get_running_loop()
             await asyncio.wait_for(loop.getaddrinfo(domain, 80, family=socket.AF_INET), timeout=timeout)
             return True
         except (asyncio.TimeoutError, socket.gaierror, OSError):
@@ -800,7 +801,10 @@ async def task_monitor_netwatch():
                         critical_devices=current_critical,
                     )
 
-                    await asyncio.to_thread(database.log_incident_down, h, host_kategori_short, snapshot)
+                    # FIND-22 FIX: Capture incident DB ID dan simpan ke _netwatch_db_id
+                    db_id = await asyncio.to_thread(database.log_incident_down, h, host_kategori_short, snapshot)
+                    if db_id:
+                        _netwatch_db_id[h] = db_id
 
                     waktu = _alert_timestamp()
                     host_label = h
