@@ -10,6 +10,8 @@ import socket
 import ipaddress
 import random
 from collections import deque
+from datetime import datetime
+from mikrotik.queue import format_rate_bps
 
 from telegram import InlineKeyboardMarkup, InlineKeyboardButton
 import core.config as cfg
@@ -1427,8 +1429,7 @@ async def _identify_rx_anomaly_sources():
 
 def _build_rx_anomaly_alert_message(iface_name, level, rx_pps, tx_pps, rx_bps, tx_bps, hits, threshold_hits, sources):
     """Bangun pesan alert RX anomaly."""
-    from mikrotik.queue import format_rate_bps
-
+    # FIND-23 FIX: format_rate_bps diimport di top-level, tidak lagi inside fungsi.
     lvl = "CRITICAL" if level == "critical" else "WARNING"
     emoji = "🔴" if level == "critical" else "🟡"
 
@@ -1713,7 +1714,7 @@ async def _run_rx_anomaly_detection(active_ifaces, traffic_results, all_interfac
 
 def now_timestamp():
     """Format timestamp sekarang untuk alert message."""
-    from datetime import datetime
+    # FIND-24 FIX: datetime diimport di top-level, tidak lagi inside fungsi.
     return datetime.now().strftime("%H:%M:%S")
 
 
