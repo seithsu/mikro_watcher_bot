@@ -18,7 +18,7 @@ from mikrotik import (
     get_default_gateway,
     export_router_backup, export_router_backup_ftp,
 )
-from handlers.utils import read_state_json
+from handlers.utils import read_state_json, format_voltage  # FIND-26 FIX: import format_voltage
 from core import database
 
 logger = logging.getLogger(__name__)
@@ -162,13 +162,9 @@ async def daily_report(context: ContextTypes.DEFAULT_TYPE):
         sensors = []
         if info.get('cpu_temp'): sensors.append(f"🌡️ {info['cpu_temp']}°C")
         if info.get('voltage'):
-            v = info['voltage']
-            try:
-                v_val = float(v)
-                if v_val > 100: v_val = v_val / 10
-                sensors.append(f"⚡ {v_val}V")
-            except Exception:
-                sensors.append(f"⚡ {v}V")
+            v_str = format_voltage(info['voltage'])  # FIND-26 FIX: gunakan shared helper
+            if v_str:
+                sensors.append(f"⚡ {v_str}")
         if sensors:
             sensors_str = f"- Sensors: {' | '.join(sensors)}\n"
 

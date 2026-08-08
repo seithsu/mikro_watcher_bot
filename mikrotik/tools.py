@@ -1,4 +1,4 @@
-﻿# ============================================
+# ============================================
 # MIKROTIK/TOOLS - Ping, WoL, Free IP finder
 # ============================================
 
@@ -6,32 +6,15 @@ import logging
 import ipaddress
 
 from .connection import pool
+from ._arp_utils import _truthy, _is_active_arp_entry  # FIND-25 FIX: import dari canonical source
 from .decorators import with_retry, to_int
 import core.config as cfg
 
 logger = logging.getLogger(__name__)
 
 
-def _truthy(value):
-    return str(value).strip().lower() in {"true", "yes", "on", "1"}
-
-
-def _is_active_arp_entry(arp):
-    mac = str(arp.get('mac-address', '') or '').strip()
-    if not mac or mac in {"00:00:00:00:00:00", "00-00-00-00-00-00"}:
-        return False
-
-    status = str(arp.get('status', '') or '').strip().lower()
-    if status in {"incomplete", "failed", "stale", "delay", "probe"}:
-        return False
-
-    if 'complete' in arp and not _truthy(arp.get('complete')):
-        return False
-
-    if _truthy(arp.get('invalid')) or _truthy(arp.get('disabled')):
-        return False
-
-    return True
+# FIND-25 FIX: _truthy dan _is_active_arp_entry diimport dari mikrotik._arp_utils
+# (single source of truth). Definisi lokal dihapus untuk menghindari duplikasi.
 
 
 def _extract_queue_target_ip(queue_item):

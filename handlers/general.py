@@ -1,6 +1,7 @@
 import logging
 import time
 import asyncio
+from datetime import datetime  # FIND-27 FIX: pindah ke top-level dari dalam cmd_status
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
@@ -12,7 +13,7 @@ from services.runtime_reset import reset_runtime_data
 from .utils import (
     _check_access, get_back_button, append_back_button, format_bytes_auto,
     read_state_json, escape_html, generic_error_html, set_cache_with_ts, get_cache_if_fresh,
-    with_menu_timestamp, format_duration_hms
+    with_menu_timestamp, format_duration_hms, format_voltage  # FIND-26 FIX: import format_voltage
 )
 from core import database
 
@@ -650,8 +651,7 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
         pool_pct_dhcp = (dhcp_count / effective_dhcp_pool_size) * 100 if effective_dhcp_pool_size > 0 else 0
 
         # Waktu
-        from datetime import datetime
-        tz_label = datetime.now().astimezone().tzname() or "LOCAL"
+        tz_label = datetime.now().astimezone().tzname() or "LOCAL"  # FIND-27 FIX: pakai top-level import
         now_str = datetime.now().strftime(f"%Y-%m-%d %H:%M:%S {tz_label}")
 
         # Calculate Disk usage
@@ -734,14 +734,9 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
         sensors = []
         if info.get('cpu_temp'): sensors.append(f"🌡️ {info['cpu_temp']}°C")
         if info.get('voltage'):
-            v = info['voltage']
-            # MikroTik often returns voltage in decidegrees (e.g. 241 = 24.1V)
-            try:
-                v_val = float(v)
-                if v_val > 100: v_val = v_val / 10
-                sensors.append(f"⚡ {v_val}V")
-            except Exception:
-                sensors.append(f"⚡ {v}V")
+            v_str = format_voltage(info['voltage'])  # FIND-26 FIX: gunakan shared helper
+            if v_str:
+                sensors.append(f"⚡ {v_str}")
                 
         if sensors:
             pesan += f"- Sensors: {' | '.join(sensors)}\n"

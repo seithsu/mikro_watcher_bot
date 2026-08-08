@@ -10,6 +10,7 @@ from datetime import datetime
 
 from .connection import pool
 from .decorators import with_retry, cached, to_bool, to_int, format_bytes
+from ._arp_utils import _truthy, _is_active_arp_entry  # FIND-25 FIX: import dari canonical source
 import core.config as cfg
 
 logger = logging.getLogger(__name__)
@@ -366,26 +367,8 @@ def get_arp_anomalies(critical_macs):
     return anomalies
 
 
-def _is_active_arp_entry(arp):
-    """Tentukan apakah entri ARP layak dianggap host aktif."""
-    mac = str(arp.get('mac-address', '') or '').strip()
-    if not mac or mac == '00:00:00:00:00:00':
-        return False
-
-    status = str(arp.get('status', '') or '').strip().lower()
-    if status in {'stale', 'failed', 'incomplete', 'delay', 'probe'}:
-        return False
-
-    complete_val = arp.get('complete')
-    if complete_val is not None and str(complete_val).strip().lower() in {'false', 'no', '0'}:
-        return False
-
-    for key in ('invalid', 'disabled'):
-        raw = arp.get(key)
-        if raw is not None and str(raw).strip().lower() in {'true', 'yes', '1'}:
-            return False
-
-    return True
+# FIND-25 FIX: _is_active_arp_entry diimport dari mikrotik._arp_utils (single source of truth).
+# Definisi lokal dihapus untuk menghindari inkonsistensi saat logika ARP berubah.
 
 
 @cached(ttl=10)

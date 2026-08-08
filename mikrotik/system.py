@@ -176,7 +176,7 @@ def export_router_backup(backup_type="backup"):
 
     except Exception as e:
         logger.error(f"Gagal backup router: {e}")
-        raise e
+        raise  # FIND-31 FIX: `raise` tanpa argumen mempertahankan traceback asli
 
 
 def _run_export_script(api, filename):
@@ -211,7 +211,9 @@ def _run_export_script(api, filename):
                 scripts.remove(target[0]['.id'])
         except Exception as e:
             logger.debug("Suppressed non-fatal exception: %s", e)
-@with_retry
+
+
+@with_retry  # FIND-29 FIX: tambah blank line sebelum top-level function
 def export_router_backup_ftp(backup_type="backup"):
     """
     Membuat backup dan mengambil via FTP (Paling stabil untuk RouterOS).

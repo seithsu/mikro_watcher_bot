@@ -161,6 +161,28 @@ def format_duration_hms(seconds):
     return f"{s}s"
 
 
+def format_voltage(v):
+    """Format nilai voltage dari MikroTik ke string yang human-readable.
+
+    FIND-26 FIX: Single source of truth — menggantikan duplikasi logika
+    di handlers/general.py dan handlers/jobs.py.
+
+    RouterOS kadang mengembalikan voltage dalam decidegrees (mis. 241 = 24.1V).
+    Jika nilai > 100, dibagi 10 untuk konversi ke volt nyata.
+
+    Return string mis. '24.1V' atau '' jika v tidak valid.
+    """
+    if not v:
+        return ""
+    try:
+        v_val = float(v)
+        if v_val > 100:
+            v_val = v_val / 10
+        return f"{v_val:.1f}V"
+    except (TypeError, ValueError):
+        return f"{v}V"
+
+
 def escape_html(value):
     """Escape aman untuk field dinamis pada parse_mode='HTML' (body text)."""
     return _html_escape(str(value), quote=False)

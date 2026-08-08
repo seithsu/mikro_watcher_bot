@@ -1,4 +1,4 @@
-﻿# ============================================
+# ============================================
 # MIKROTIK/SCAN - IP Scan (Real-time + Fallback)
 # ============================================
 
@@ -9,6 +9,7 @@ import ssl
 import librouteros
 
 from .connection import pool, _login_auto
+from ._arp_utils import _truthy, _is_active_arp_entry  # FIND-25 FIX: import dari canonical source
 import core.config as cfg
 
 logger = logging.getLogger(__name__)
@@ -16,27 +17,8 @@ logger = logging.getLogger(__name__)
 _scan_lock = threading.Lock()
 
 
-def _truthy(value):
-    return str(value).strip().lower() in {"true", "yes", "on", "1"}
-
-
-def _is_active_arp_entry(arp):
-    """Tentukan apakah entri ARP layak dianggap host aktif."""
-    mac = str(arp.get('mac-address', '') or '').strip()
-    if not mac or mac in {"00:00:00:00:00:00", "00-00-00-00-00-00"}:
-        return False
-
-    status = str(arp.get('status', '') or '').strip().lower()
-    if status in {"incomplete", "failed", "stale", "delay", "probe"}:
-        return False
-
-    if 'complete' in arp and not _truthy(arp.get('complete')):
-        return False
-
-    if _truthy(arp.get('invalid')) or _truthy(arp.get('disabled')):
-        return False
-
-    return True
+# FIND-25 FIX: _truthy dan _is_active_arp_entry diimport dari mikrotik._arp_utils
+# (single source of truth). Definisi lokal dihapus untuk menghindari duplikasi.
 
 
 def _librouteros_ip_scan(interface, duration=10):

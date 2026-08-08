@@ -176,11 +176,11 @@ async def callback_ping(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # FIND-4 FIX: Validasi target dari callback data, sama seperti cmd_ping.
     # Callback data bisa dimanipulasi — jangan langsung percaya isinya.
-    import re as _re
+    # FIND-28 FIX: Gunakan `re` yang sudah diimport di top-level, bukan import per-call.
     try:
         ipaddress.ip_address(target)
     except ValueError:
-        if not _re.match(r'^[a-zA-Z0-9]([a-zA-Z0-9\-\.]{0,251}[a-zA-Z0-9])?$', target):
+        if not re.match(r'^[a-zA-Z0-9]([a-zA-Z0-9\-\.]{0,251}[a-zA-Z0-9])?$', target):
             await query.answer("Target tidak valid.", show_alert=True)
             return
 
