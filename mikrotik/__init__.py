@@ -9,6 +9,17 @@
 
 # -- Connection pool (used by monitor.py, bot.py, handlers/general.py) --
 from .connection import pool as _pool
+# ============================================
+# MIKROTIK Package - Public API
+# ============================================
+#
+# Backward-compatible exports:
+# Semua `from mikrotik import X` yang ada di codebase
+# tetap bekerja tanpa perubahan.
+# ============================================
+
+# -- Connection pool (used by monitor.py, bot.py, handlers/general.py) --
+from .connection import pool as _pool
 
 # -- Decorators (internal, tapi _format_bytes dipakai beberapa handler) --
 from .decorators import format_bytes as _format_bytes
@@ -25,6 +36,7 @@ from .system import (
 # -- Network --
 from .network import (
     get_interfaces,
+    set_interface_status,
     get_ip_addresses,
     get_traffic,
     get_dhcp_leases,

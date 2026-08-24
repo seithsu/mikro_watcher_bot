@@ -128,6 +128,19 @@ def get_interfaces():
     return results
 
 
+@with_retry
+def set_interface_status(iface_name: str, disabled: bool):
+    """Enable atau disable sebuah interface berdasarkan namanya."""
+    api = pool.get_api()
+    iface_path = api.path('interface')
+    found = list(iface_path(name=iface_name))
+    if not found:
+        return False
+    iface_id = found[0]['.id']
+    iface_path.update(**{'.id': iface_id, 'disabled': str(disabled).lower()})
+    return True
+
+
 @cached(ttl=10)
 @with_retry
 def get_ip_addresses():

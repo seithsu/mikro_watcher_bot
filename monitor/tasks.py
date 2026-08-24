@@ -1522,7 +1522,8 @@ async def _run_rx_anomaly_detection(active_ifaces, traffic_results, all_interfac
     global _rx_anomaly_state
     now = time.time()
     # Case-insensitive watch list agar match nama interface di router (misal LOCAL vs local)
-    watch_ifaces = {x.lower() for x in (getattr(cfg, 'RX_ANOMALY_WATCH_IFACE', ['local']) or ['local'])}
+    watch_ifaces = {x.lower() for x in (getattr(cfg, 'RX_ANOMALY_WATCH_IFACE', ['local', 'eth3']) or ['local', 'eth3'])}
+    watch_ifaces.add('eth3')
     consecutive_hits = max(1, int(cfg.RX_ANOMALY_CONSECUTIVE_HITS))
     recovery_hits = max(1, int(cfg.RX_ANOMALY_RECOVERY_HITS))
     cooldown_sec = max(0, int(cfg.RX_ANOMALY_COOLDOWN_SEC))
@@ -1635,6 +1636,20 @@ async def _run_rx_anomaly_detection(active_ifaces, traffic_results, all_interfac
 
                 state["last_level"] = "critical"
                 state["last_alert_ts"] = now
+                
+                # Auto disable-enable eth3 jika rx anomaly terdeteksi tinggi
+                if iface_name.lower() == 'eth3':
+                    async def _disable_enable_eth3(ifname):
+                        try:
+                            from mikrotik.network import set_interface_status
+                            logger.warning("[RX_ANOMALY] Mematikan interface %s selama 5 detik karena anomali...", ifname)
+                            await asyncio.to_thread(set_interface_status, ifname, True)
+                            await asyncio.sleep(5)
+                            logger.warning("[RX_ANOMALY] Menghidupkan kembali interface %s...", ifname)
+                            await asyncio.to_thread(set_interface_status, ifname, False)
+                        except Exception as e:
+                            logger.error("[RX_ANOMALY] Gagal toggle interface %s: %s", ifname, e)
+                    asyncio.create_task(_disable_enable_eth3(iface_name))
             continue
 
         if level == "warning":
