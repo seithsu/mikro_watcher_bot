@@ -1,24 +1,35 @@
 import logging
 import asyncio
 import ipaddress
-
+import re
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 
 from core.logger import catat
 from .utils import (
     _check_access, cek_admin, get_back_button, append_back_button,
-    format_bytes_auto, escape_html, generic_error_html, with_menu_timestamp,
+    escape_html, generic_error_html, with_menu_timestamp,
     set_cache_with_ts, get_cache_if_fresh
 )
 from core.config import PING_COUNT
 from mikrotik import (
-    ping_host, get_dns_static, add_dns_static, remove_dns_static,
-    get_schedulers, set_scheduler_status,
-    get_vpn_tunnels, get_firewall_rules, toggle_firewall_rule, _format_bytes,
-    get_simple_queues, get_monitored_aps, get_monitored_servers,
-    extract_single_queue_target_ip, get_address_list_entries, block_ip, unblock_ip
-)
+    ping_host,
+    get_dns_static,
+    add_dns_static,
+    remove_dns_static,
+    get_schedulers,
+    set_scheduler_status,
+    get_vpn_tunnels,
+    get_firewall_rules,
+    toggle_firewall_rule,
+    _format_bytes,
+    get_simple_queues,
+    get_monitored_aps,
+    get_monitored_servers,
+    extract_single_queue_target_ip,
+    get_address_list_entries,
+    block_ip,
+    unblock_ip)
 from core import database
 
 logger = logging.getLogger(__name__)
@@ -30,7 +41,7 @@ CLOWN_LIST_NAME = "clown_list"
 def _get_ping_hosts():
     """Ambil daftar host untuk ping, pakai nama dari queue jika ada."""
     hosts = {}
-    
+
     # Ambil mapping IP→nama dari queue
     try:
         queues = get_simple_queues()
@@ -42,30 +53,31 @@ def _get_ping_hosts():
                 queue_names[ip_only] = q.get('name', ip_only)
     except Exception:
         queue_names = {}
-    
+
     # Servers & APs — gunakan nama queue jika ada
     current_aps = get_monitored_aps()
     current_servers = get_monitored_servers()
     for label, ip in {**current_servers, **current_aps}.items():
         display_name = queue_names.get(ip, label)
         hosts[display_name] = ip
-    
+
     # Queue entries yang belum ada
     for ip, name in queue_names.items():
         if ip not in hosts.values():
             hosts[name] = ip
-    
+
     # Default external
     hosts['Internet (1.1.1.1)'] = '1.1.1.1'
     hosts['DNS Google (8.8.8.8)'] = '8.8.8.8'
-    
+
     return hosts
 
 
 async def cmd_ping(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Perintah /ping - Ping host dari router."""
     user = update.effective_user
-    if await _check_access(update, user, "/ping"): return
+    if await _check_access(update, user, "/ping"):
+        return
 
     if update.callback_query:
         await update.callback_query.answer()
@@ -77,9 +89,12 @@ async def cmd_ping(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             ipaddress.ip_address(target)
         except ValueError:
-            # Bukan IP — cek apakah hostname valid (alphanumeric, dot, hyphen, max 253 chars)
+            # Bukan IP — cek apakah hostname valid (alphanumeric, dot, hyphen,
+            # max 253 chars)
             import re
-            if not re.match(r'^[a-zA-Z0-9]([a-zA-Z0-9\-\.]{0,251}[a-zA-Z0-9])?$', target):
+            if not re.match(
+                r'^[a-zA-Z0-9]([a-zA-Z0-9\-\.]{0,251}[a-zA-Z0-9])?$',
+                    target):
                 await update.effective_message.reply_text(
                     "❌ Target tidak valid. Gunakan IP address atau hostname.",
                     reply_markup=get_back_button(),
@@ -101,16 +116,21 @@ async def cmd_ping(update: Update, context: ContextTypes.DEFAULT_TYPE):
         keyboard.append(row)
 
     reply_markup = InlineKeyboardMarkup(keyboard)
-    text = with_menu_timestamp("🏓 <b>Ping dari Router</b>\n\nPilih target atau ketik <code>/ping [IP/hostname]</code>")
+    text = with_menu_timestamp(
+        "🏓 <b>Ping dari Router</b>\n\nPilih target atau ketik <code>/ping [IP/hostname]</code>")
 
     if update.callback_query:
-        try: await update.callback_query.message.edit_text(text, parse_mode='HTML', reply_markup=append_back_button(reply_markup))
-        except Exception as e: logger.debug("Non-fatal UI update error: %s", e)
+        try:
+            await update.callback_query.message.edit_text(text, parse_mode='HTML', reply_markup=append_back_button(reply_markup))
+        except Exception as e:
+            logger.debug("Non-fatal UI update error: %s", e)
     else:
         await update.effective_message.reply_text(text, parse_mode='HTML', reply_markup=append_back_button(reply_markup))
 
 
-async def callback_config_reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def callback_config_reset(
+        update: Update,
+        context: ContextTypes.DEFAULT_TYPE):
     """Handle tombol Reset Semua Data dari menu /config.
 
     Dua step:
@@ -164,8 +184,9 @@ async def callback_config_reset(update: Update, context: ContextTypes.DEFAULT_TY
             await query.edit_message_text(text, parse_mode='HTML', reply_markup=get_back_button())
         except Exception as e:
             logger.debug("Suppressed non-fatal exception: %s", e)
-async def callback_ping(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
+
+async def callback_ping(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle callback ping host."""
     query = update.callback_query
     user = query.from_user
@@ -176,11 +197,14 @@ async def callback_ping(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # FIND-4 FIX: Validasi target dari callback data, sama seperti cmd_ping.
     # Callback data bisa dimanipulasi — jangan langsung percaya isinya.
-    # FIND-28 FIX: Gunakan `re` yang sudah diimport di top-level, bukan import per-call.
+    # FIND-28 FIX: Gunakan `re` yang sudah diimport di top-level, bukan import
+    # per-call.
     try:
         ipaddress.ip_address(target)
     except ValueError:
-        if not re.match(r'^[a-zA-Z0-9]([a-zA-Z0-9\-\.]{0,251}[a-zA-Z0-9])?$', target):
+        if not re.match(
+            r'^[a-zA-Z0-9]([a-zA-Z0-9\-\.]{0,251}[a-zA-Z0-9])?$',
+                target):
             await query.answer("Target tidak valid.", show_alert=True)
             return
 
@@ -231,10 +255,12 @@ async def _execute_ping(update, context, target):
         logger.debug("Suppressed non-fatal exception: %s", e)
 # ============ /dns ============
 
+
 async def cmd_dns(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Perintah /dns - Kelola DNS static."""
     user = update.effective_user
-    if await _check_access(update, user, "/dns"): return
+    if await _check_access(update, user, "/dns"):
+        return
 
     if update.callback_query:
         await update.callback_query.answer()
@@ -243,24 +269,30 @@ async def cmd_dns(update: Update, context: ContextTypes.DEFAULT_TYPE):
         entries = await asyncio.to_thread(get_dns_static)
 
         if not entries:
-            text = with_menu_timestamp("📡 <b>DNS Static</b>\n\n<i>Tidak ada entry DNS static.</i>")
+            text = with_menu_timestamp(
+                "📡 <b>DNS Static</b>\n\n<i>Tidak ada entry DNS static.</i>")
         else:
             context.bot_data['dns_entries'] = entries
             text, reply_markup = _format_dns_page(entries, 0)
             catat(user.id, user.username, "/dns", "berhasil")
             if update.callback_query:
-                try: await update.callback_query.message.edit_text(text, parse_mode='HTML', reply_markup=append_back_button(reply_markup))
-                except Exception as e: logger.debug("Non-fatal UI update error: %s", e)
+                try:
+                    await update.callback_query.message.edit_text(text, parse_mode='HTML', reply_markup=append_back_button(reply_markup))
+                except Exception as e:
+                    logger.debug("Non-fatal UI update error: %s", e)
             else:
                 await update.effective_message.reply_text(text, parse_mode='HTML', reply_markup=append_back_button(reply_markup))
             return
 
-        keyboard = [[InlineKeyboardButton("➕ Add DNS", callback_data="dns_add_prompt")]]
+        keyboard = [[InlineKeyboardButton(
+            "➕ Add DNS", callback_data="dns_add_prompt")]]
         reply_markup = InlineKeyboardMarkup(keyboard)
         catat(user.id, user.username, "/dns", "berhasil")
         if update.callback_query:
-            try: await update.callback_query.message.edit_text(text, parse_mode='HTML', reply_markup=append_back_button(reply_markup))
-            except Exception as e: logger.debug("Non-fatal UI update error: %s", e)
+            try:
+                await update.callback_query.message.edit_text(text, parse_mode='HTML', reply_markup=append_back_button(reply_markup))
+            except Exception as e:
+                logger.debug("Non-fatal UI update error: %s", e)
         else:
             await update.effective_message.reply_text(text, parse_mode='HTML', reply_markup=append_back_button(reply_markup))
 
@@ -268,8 +300,10 @@ async def cmd_dns(update: Update, context: ContextTypes.DEFAULT_TYPE):
         catat(user.id, user.username, "/dns", f"error: {e}")
         text = generic_error_html("Gagal memuat DNS static")
         if update.callback_query:
-            try: await update.callback_query.message.edit_text(text, parse_mode='HTML', reply_markup=get_back_button())
-            except Exception as e: logger.debug("Non-fatal UI update error: %s", e)
+            try:
+                await update.callback_query.message.edit_text(text, parse_mode='HTML', reply_markup=get_back_button())
+            except Exception as e:
+                logger.debug("Non-fatal UI update error: %s", e)
         else:
             await update.effective_message.reply_text(text, parse_mode='HTML', reply_markup=get_back_button())
 
@@ -291,30 +325,47 @@ def _format_dns_page(entries, page=0, per_page=10):
     for i, e in enumerate(entries[start:end], start + 1):
         status = "🔴" if e['disabled'] else "🟢"
         comment = f" ({e['comment']})" if e['comment'] else ""
-        text += f"{status} <b>{i}.</b> <code>{e['name']}</code> → {e['address']}{comment}\n"
+        text += f"{status} <b>{i}.</b> <code>{
+            e['name']}</code> → {
+            e['address']}{comment}\n"
 
     keyboard = []
     # Nav
     nav = []
     if page > 0:
-        nav.append(InlineKeyboardButton("◀️ Prev", callback_data=f"dnspage_{page - 1}"))
+        nav.append(
+            InlineKeyboardButton(
+                "◀️ Prev",
+                callback_data=f"dnspage_{
+                    page - 1}"))
     if page < total_pages - 1:
-        nav.append(InlineKeyboardButton("Next ▶️", callback_data=f"dnspage_{page + 1}"))
+        nav.append(
+            InlineKeyboardButton(
+                "Next ▶️",
+                callback_data=f"dnspage_{
+                    page + 1}"))
     if nav:
         keyboard.append(nav)
 
     # Delete buttons (for current page entries)
     del_row = []
     for i, e in enumerate(entries[start:end], start):
-        del_row.append(InlineKeyboardButton(f"🗑️ {i+1}", callback_data=f"dnsdel_{e['id']}"))
+        del_row.append(
+            InlineKeyboardButton(
+                f"🗑️ {
+                    i + 1}",
+                callback_data=f"dnsdel_{
+                    e['id']}"))
         if len(del_row) == 5:
             keyboard.append(del_row)
             del_row = []
     if del_row:
         keyboard.append(del_row)
 
-    keyboard.append([InlineKeyboardButton("➕ Add DNS", callback_data="dns_add_prompt")])
-    keyboard.append([InlineKeyboardButton("🔄 Refresh", callback_data="cmd_dns")])
+    keyboard.append([InlineKeyboardButton(
+        "➕ Add DNS", callback_data="dns_add_prompt")])
+    keyboard.append([InlineKeyboardButton(
+        "🔄 Refresh", callback_data="cmd_dns")])
 
     return with_menu_timestamp(text), InlineKeyboardMarkup(keyboard)
 
@@ -336,33 +387,44 @@ async def callback_dns(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         text, reply_markup = _format_dns_page(entries, page)
         await query.answer()
-        try: await query.edit_message_text(text, parse_mode='HTML', reply_markup=append_back_button(reply_markup))
-        except Exception as e: logger.debug("Non-fatal UI update error: %s", e)
+        try:
+            await query.edit_message_text(text, parse_mode='HTML', reply_markup=append_back_button(reply_markup))
+        except Exception as e:
+            logger.debug("Non-fatal UI update error: %s", e)
 
     elif data.startswith('dnsdel_'):
         entry_id = data.replace('dnsdel_', '')
         await query.answer("Menghapus entry...")
         try:
             await asyncio.to_thread(remove_dns_static, entry_id)
-            catat(user.id, user.username, f"/dns delete {entry_id}", "berhasil")
+            catat(
+                user.id,
+                user.username,
+                f"/dns delete {entry_id}",
+                "berhasil")
             # Refresh
             entries = await asyncio.to_thread(get_dns_static)
             context.bot_data['dns_entries'] = entries
             if entries:
                 text, reply_markup = _format_dns_page(entries, 0)
             else:
-                text = with_menu_timestamp("📡 <b>DNS Static</b>\n\n<i>Tidak ada entry tersisa.</i>")
-                reply_markup = InlineKeyboardMarkup([[InlineKeyboardButton("➕ Add DNS", callback_data="dns_add_prompt")]])
-            try: await query.edit_message_text(text, parse_mode='HTML', reply_markup=append_back_button(reply_markup))
-            except Exception as e: logger.debug("Non-fatal UI update error: %s", e)
-        except Exception as e:
+                text = with_menu_timestamp(
+                    "📡 <b>DNS Static</b>\n\n<i>Tidak ada entry tersisa.</i>")
+                reply_markup = InlineKeyboardMarkup(
+                    [[InlineKeyboardButton("➕ Add DNS", callback_data="dns_add_prompt")]])
+            try:
+                await query.edit_message_text(text, parse_mode='HTML', reply_markup=append_back_button(reply_markup))
+            except Exception as e:
+                logger.debug("Non-fatal UI update error: %s", e)
+        except Exception:
             try:
                 await query.edit_message_text(
                     generic_error_html("Gagal menghapus DNS"),
                     parse_mode='HTML',
                     reply_markup=get_back_button()
                 )
-            except Exception as e: logger.debug("Non-fatal UI update error: %s", e)
+            except Exception as e:
+                logger.debug("Non-fatal UI update error: %s", e)
 
     elif data == 'dns_add_prompt':
         await query.answer()
@@ -375,8 +437,10 @@ async def callback_dns(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         text = with_menu_timestamp(text)
         context.user_data['awaiting_dns_add'] = True
-        try: await query.edit_message_text(text, parse_mode='HTML', reply_markup=get_back_button())
-        except Exception as e: logger.debug("Non-fatal UI update error: %s", e)
+        try:
+            await query.edit_message_text(text, parse_mode='HTML', reply_markup=get_back_button())
+        except Exception as e:
+            logger.debug("Non-fatal UI update error: %s", e)
 
     elif data == 'dns_add_confirm':
         pending = context.user_data.get('pending_dns')
@@ -386,24 +450,30 @@ async def callback_dns(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.answer("Menambahkan...")
         try:
             await asyncio.to_thread(add_dns_static, pending['name'], pending['address'], "Added via Bot")
-            catat(user.id, user.username, f"/dns add {pending['name']} {pending['address']}", "berhasil")
+            catat(user.id,
+                  user.username,
+                  f"/dns add {pending['name']} {pending['address']}",
+                  "berhasil")
             context.user_data.pop('pending_dns', None)
             context.user_data.pop('awaiting_dns_add', None)
             # Refresh
             entries = await asyncio.to_thread(get_dns_static)
             context.bot_data['dns_entries'] = entries
             text, reply_markup = _format_dns_page(entries, 0)
-            try: await query.edit_message_text(f"✅ DNS <code>{pending['name']}</code> → {pending['address']} ditambahkan!\n\n" + text,
-                                               parse_mode='HTML', reply_markup=append_back_button(reply_markup))
-            except Exception as e: logger.debug("Non-fatal UI update error: %s", e)
-        except Exception as e:
+            try:
+                await query.edit_message_text(f"✅ DNS <code>{pending['name']}</code> → {pending['address']} ditambahkan!\n\n" + text,
+                                              parse_mode='HTML', reply_markup=append_back_button(reply_markup))
+            except Exception as e:
+                logger.debug("Non-fatal UI update error: %s", e)
+        except Exception:
             try:
                 await query.edit_message_text(
                     generic_error_html("Gagal menambah DNS"),
                     parse_mode='HTML',
                     reply_markup=get_back_button()
                 )
-            except Exception as e: logger.debug("Non-fatal UI update error: %s", e)
+            except Exception as e:
+                logger.debug("Non-fatal UI update error: %s", e)
 
 
 async def handle_dns_add(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -449,7 +519,8 @@ async def handle_dns_add(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def cmd_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Perintah /schedule - Lihat & manage RouterOS scheduler."""
     user = update.effective_user
-    if await _check_access(update, user, "/schedule"): return
+    if await _check_access(update, user, "/schedule"):
+        return
 
     if update.callback_query:
         await update.callback_query.answer()
@@ -459,10 +530,13 @@ async def cmd_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.bot_data['schedulers'] = scheds
 
         if not scheds:
-            text = with_menu_timestamp("📅 <b>Scheduler</b>\n\n<i>Tidak ada scheduler entry.</i>")
+            text = with_menu_timestamp(
+                "📅 <b>Scheduler</b>\n\n<i>Tidak ada scheduler entry.</i>")
             if update.callback_query:
-                try: await update.callback_query.message.edit_text(text, parse_mode='HTML', reply_markup=get_back_button())
-                except Exception as e: logger.debug("Non-fatal UI update error: %s", e)
+                try:
+                    await update.callback_query.message.edit_text(text, parse_mode='HTML', reply_markup=get_back_button())
+                except Exception as e:
+                    logger.debug("Non-fatal UI update error: %s", e)
             else:
                 await update.effective_message.reply_text(text, parse_mode='HTML', reply_markup=get_back_button())
             return
@@ -470,8 +544,10 @@ async def cmd_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text, reply_markup = _format_schedule_page(scheds, 0)
         catat(user.id, user.username, "/schedule", "berhasil")
         if update.callback_query:
-            try: await update.callback_query.message.edit_text(text, parse_mode='HTML', reply_markup=append_back_button(reply_markup))
-            except Exception as e: logger.debug("Non-fatal UI update error: %s", e)
+            try:
+                await update.callback_query.message.edit_text(text, parse_mode='HTML', reply_markup=append_back_button(reply_markup))
+            except Exception as e:
+                logger.debug("Non-fatal UI update error: %s", e)
         else:
             await update.effective_message.reply_text(text, parse_mode='HTML', reply_markup=append_back_button(reply_markup))
 
@@ -479,8 +555,10 @@ async def cmd_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE):
         catat(user.id, user.username, "/schedule", f"error: {e}")
         text = generic_error_html("Gagal memuat scheduler")
         if update.callback_query:
-            try: await update.callback_query.message.edit_text(text, parse_mode='HTML', reply_markup=get_back_button())
-            except Exception as e: logger.debug("Non-fatal UI update error: %s", e)
+            try:
+                await update.callback_query.message.edit_text(text, parse_mode='HTML', reply_markup=get_back_button())
+            except Exception as e:
+                logger.debug("Non-fatal UI update error: %s", e)
         else:
             await update.effective_message.reply_text(text, parse_mode='HTML', reply_markup=get_back_button())
 
@@ -502,7 +580,8 @@ def _format_schedule_page(scheds, page=0, per_page=10):
     for i, s in enumerate(scheds[start:end], start + 1):
         status = "🔴" if s['disabled'] else "🟢"
         interval = s['interval'] if s['interval'] else "one-time"
-        event_preview = s['on_event'][:40] + "..." if len(s['on_event']) > 40 else s['on_event']
+        event_preview = s['on_event'][:40] + \
+            "..." if len(s['on_event']) > 40 else s['on_event']
         text += (
             f"{status} <b>{i}. {s['name']}</b>\n"
             f"   ⏰ Interval: {interval}\n"
@@ -513,9 +592,17 @@ def _format_schedule_page(scheds, page=0, per_page=10):
     keyboard = []
     nav = []
     if page > 0:
-        nav.append(InlineKeyboardButton("◀️ Prev", callback_data=f"schedpage_{page - 1}"))
+        nav.append(
+            InlineKeyboardButton(
+                "◀️ Prev",
+                callback_data=f"schedpage_{
+                    page - 1}"))
     if page < total_pages - 1:
-        nav.append(InlineKeyboardButton("Next ▶️", callback_data=f"schedpage_{page + 1}"))
+        nav.append(
+            InlineKeyboardButton(
+                "Next ▶️",
+                callback_data=f"schedpage_{
+                    page + 1}"))
     if nav:
         keyboard.append(nav)
 
@@ -523,19 +610,27 @@ def _format_schedule_page(scheds, page=0, per_page=10):
     toggle_row = []
     for i, s in enumerate(scheds[start:end], start):
         icon = "🟢" if s['disabled'] else "🔴"  # Opposite: click to toggle
-        toggle_row.append(InlineKeyboardButton(f"{icon} {i+1}", callback_data=f"schedtoggle_{s['id']}"))
+        toggle_row.append(
+            InlineKeyboardButton(
+                f"{icon} {
+                    i + 1}",
+                callback_data=f"schedtoggle_{
+                    s['id']}"))
         if len(toggle_row) == 5:
             keyboard.append(toggle_row)
             toggle_row = []
     if toggle_row:
         keyboard.append(toggle_row)
 
-    keyboard.append([InlineKeyboardButton("🔄 Refresh", callback_data="cmd_schedule")])
+    keyboard.append([InlineKeyboardButton(
+        "🔄 Refresh", callback_data="cmd_schedule")])
 
     return with_menu_timestamp(text), InlineKeyboardMarkup(keyboard)
 
 
-async def callback_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def callback_schedule(
+        update: Update,
+        context: ContextTypes.DEFAULT_TYPE):
     """Handle scheduler callbacks."""
     query = update.callback_query
     user = query.from_user
@@ -556,8 +651,10 @@ async def callback_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         text, reply_markup = _format_schedule_page(scheds, page)
         await query.answer()
-        try: await query.edit_message_text(text, parse_mode='HTML', reply_markup=append_back_button(reply_markup))
-        except Exception as e: logger.debug("Non-fatal UI update error: %s", e)
+        try:
+            await query.edit_message_text(text, parse_mode='HTML', reply_markup=append_back_button(reply_markup))
+        except Exception as e:
+            logger.debug("Non-fatal UI update error: %s", e)
 
     elif data.startswith('schedtoggle_'):
         sched_id = data.replace('schedtoggle_', '')
@@ -602,12 +699,17 @@ async def callback_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         try:
             await asyncio.to_thread(set_scheduler_status, sched_id, new_disabled)
-            catat(user.id, user.username, f"/schedule toggle {target_sched['name']}", f"{'disabled' if new_disabled else 'enabled'}")
+            catat(user.id,
+                  user.username,
+                  f"/schedule toggle {target_sched['name']}",
+                  f"{'disabled' if new_disabled else 'enabled'}")
             scheds = await asyncio.to_thread(get_schedulers)
             context.bot_data['schedulers'] = scheds
             text, reply_markup = _format_schedule_page(scheds, 0)
-            try: await query.edit_message_text(text, parse_mode='HTML', reply_markup=append_back_button(reply_markup))
-            except Exception as e: logger.debug("Non-fatal UI update error: %s", e)
+            try:
+                await query.edit_message_text(text, parse_mode='HTML', reply_markup=append_back_button(reply_markup))
+            except Exception as e:
+                logger.debug("Non-fatal UI update error: %s", e)
         except Exception:
             try:
                 await query.edit_message_text(
@@ -619,10 +721,12 @@ async def callback_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 logger.debug("Suppressed non-fatal exception: %s", e)
 # ============ /vpn ============
 
+
 async def cmd_vpn(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Perintah /vpn - Monitor VPN tunnels."""
     user = update.effective_user
-    if await _check_access(update, user, "/vpn"): return
+    if await _check_access(update, user, "/vpn"):
+        return
 
     if update.callback_query:
         await update.callback_query.answer()
@@ -634,12 +738,12 @@ async def cmd_vpn(update: Update, context: ContextTypes.DEFAULT_TYPE):
             text = (
                 "🔒 <b>VPN Tunnels</b>\n\n"
                 "<i>Tidak ada tunnel VPN yang terkonfigurasi.</i>\n\n"
-                "Tunnel yang terpantau: L2TP, PPTP, SSTP, OVPN (client & server)."
-            )
+                "Tunnel yang terpantau: L2TP, PPTP, SSTP, OVPN (client & server).")
         else:
             text = f"🔒 <b>VPN Tunnels ({len(tunnels)})</b>\n{'━' * 25}\n\n"
             for t in tunnels:
-                status = "🟢 UP" if t['running'] else ("🔴 DOWN" if not t['disabled'] else "⚪ DISABLED")
+                status = "🟢 UP" if t['running'] else (
+                    "🔴 DOWN" if not t['disabled'] else "⚪ DISABLED")
                 text += (
                     f"{status} <b>{t['name']}</b> [{t['type']}]\n"
                     f"   🌐 Remote: {t['remote'] or '-'}\n"
@@ -656,8 +760,10 @@ async def cmd_vpn(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("🔄 Refresh", callback_data="cmd_vpn")]
         ])
         if update.callback_query:
-            try: await update.callback_query.message.edit_text(text, parse_mode='HTML', reply_markup=append_back_button(reply_markup))
-            except Exception as e: logger.debug("Non-fatal UI update error: %s", e)
+            try:
+                await update.callback_query.message.edit_text(text, parse_mode='HTML', reply_markup=append_back_button(reply_markup))
+            except Exception as e:
+                logger.debug("Non-fatal UI update error: %s", e)
         else:
             await update.effective_message.reply_text(text, parse_mode='HTML', reply_markup=append_back_button(reply_markup))
 
@@ -665,8 +771,10 @@ async def cmd_vpn(update: Update, context: ContextTypes.DEFAULT_TYPE):
         catat(user.id, user.username, "/vpn", f"error: {e}")
         text = generic_error_html("Gagal memuat status VPN")
         if update.callback_query:
-            try: await update.callback_query.message.edit_text(text, parse_mode='HTML', reply_markup=get_back_button())
-            except Exception as e: logger.debug("Non-fatal UI update error: %s", e)
+            try:
+                await update.callback_query.message.edit_text(text, parse_mode='HTML', reply_markup=get_back_button())
+            except Exception as e:
+                logger.debug("Non-fatal UI update error: %s", e)
         else:
             await update.effective_message.reply_text(text, parse_mode='HTML', reply_markup=get_back_button())
 
@@ -676,22 +784,27 @@ async def cmd_vpn(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def cmd_firewall(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Perintah /firewall - Lihat & manage firewall rules."""
     user = update.effective_user
-    if await _check_access(update, user, "/firewall"): return
+    if await _check_access(update, user, "/firewall"):
+        return
 
     if update.callback_query:
         await update.callback_query.answer()
 
-    chain_type = context.args[0] if context.args and context.args[0] in ('filter', 'nat') else 'filter'
+    chain_type = context.args[0] if context.args and context.args[0] in (
+        'filter', 'nat') else 'filter'
 
     try:
         rules = await asyncio.to_thread(get_firewall_rules, chain_type)
         context.bot_data[f'fw_{chain_type}'] = rules
 
         if not rules:
-            text = with_menu_timestamp(f"🛡️ <b>Firewall ({chain_type.upper()})</b>\n\n<i>Tidak ada rule.</i>")
+            text = with_menu_timestamp(
+                f"🛡️ <b>Firewall ({chain_type.upper()})</b>\n\n<i>Tidak ada rule.</i>")
             if update.callback_query:
-                try: await update.callback_query.message.edit_text(text, parse_mode='HTML', reply_markup=get_back_button())
-                except Exception as e: logger.debug("Non-fatal UI update error: %s", e)
+                try:
+                    await update.callback_query.message.edit_text(text, parse_mode='HTML', reply_markup=get_back_button())
+                except Exception as e:
+                    logger.debug("Non-fatal UI update error: %s", e)
             else:
                 await update.effective_message.reply_text(text, parse_mode='HTML', reply_markup=get_back_button())
             return
@@ -699,8 +812,10 @@ async def cmd_firewall(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text, reply_markup = _format_firewall_page(rules, chain_type, 0)
         catat(user.id, user.username, f"/firewall {chain_type}", "berhasil")
         if update.callback_query:
-            try: await update.callback_query.message.edit_text(text, parse_mode='HTML', reply_markup=append_back_button(reply_markup))
-            except Exception as e: logger.debug("Non-fatal UI update error: %s", e)
+            try:
+                await update.callback_query.message.edit_text(text, parse_mode='HTML', reply_markup=append_back_button(reply_markup))
+            except Exception as e:
+                logger.debug("Non-fatal UI update error: %s", e)
         else:
             await update.effective_message.reply_text(text, parse_mode='HTML', reply_markup=append_back_button(reply_markup))
 
@@ -708,8 +823,10 @@ async def cmd_firewall(update: Update, context: ContextTypes.DEFAULT_TYPE):
         catat(user.id, user.username, "/firewall", f"error: {e}")
         text = generic_error_html("Gagal memuat firewall")
         if update.callback_query:
-            try: await update.callback_query.message.edit_text(text, parse_mode='HTML', reply_markup=get_back_button())
-            except Exception as e: logger.debug("Non-fatal UI update error: %s", e)
+            try:
+                await update.callback_query.message.edit_text(text, parse_mode='HTML', reply_markup=get_back_button())
+            except Exception as e:
+                logger.debug("Non-fatal UI update error: %s", e)
         else:
             await update.effective_message.reply_text(text, parse_mode='HTML', reply_markup=get_back_button())
 
@@ -746,9 +863,17 @@ def _format_firewall_page(rules, chain_type, page=0, per_page=8):
     keyboard = []
     nav = []
     if page > 0:
-        nav.append(InlineKeyboardButton("◀️ Prev", callback_data=f"fwpage_{chain_type}_{page - 1}"))
+        nav.append(
+            InlineKeyboardButton(
+                "◀️ Prev",
+                callback_data=f"fwpage_{chain_type}_{
+                    page - 1}"))
     if page < total_pages - 1:
-        nav.append(InlineKeyboardButton("Next ▶️", callback_data=f"fwpage_{chain_type}_{page + 1}"))
+        nav.append(
+            InlineKeyboardButton(
+                "Next ▶️",
+                callback_data=f"fwpage_{chain_type}_{
+                    page + 1}"))
     if nav:
         keyboard.append(nav)
 
@@ -756,7 +881,12 @@ def _format_firewall_page(rules, chain_type, page=0, per_page=8):
     toggle_row = []
     for i, r in enumerate(rules[start:end], start):
         icon = "🟢" if r['disabled'] else "🔴"
-        toggle_row.append(InlineKeyboardButton(f"{icon} {i+1}", callback_data=f"fwtoggle_{chain_type}_{r['id']}"))
+        toggle_row.append(
+            InlineKeyboardButton(
+                f"{icon} {
+                    i + 1}",
+                callback_data=f"fwtoggle_{chain_type}_{
+                    r['id']}"))
         if len(toggle_row) == 5:
             keyboard.append(toggle_row)
             toggle_row = []
@@ -773,7 +903,9 @@ def _format_firewall_page(rules, chain_type, page=0, per_page=8):
     return with_menu_timestamp(text), InlineKeyboardMarkup(keyboard)
 
 
-async def callback_firewall(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def callback_firewall(
+        update: Update,
+        context: ContextTypes.DEFAULT_TYPE):
     """Handle firewall callbacks."""
     query = update.callback_query
     user = query.from_user
@@ -791,8 +923,10 @@ async def callback_firewall(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         text, reply_markup = _format_firewall_page(rules, chain_type, page)
         await query.answer()
-        try: await query.edit_message_text(text, parse_mode='HTML', reply_markup=append_back_button(reply_markup))
-        except Exception as e: logger.debug("Non-fatal UI update error: %s", e)
+        try:
+            await query.edit_message_text(text, parse_mode='HTML', reply_markup=append_back_button(reply_markup))
+        except Exception as e:
+            logger.debug("Non-fatal UI update error: %s", e)
 
     elif data.startswith('fwswitch_'):
         chain_type = data.replace('fwswitch_', '')
@@ -801,13 +935,18 @@ async def callback_firewall(update: Update, context: ContextTypes.DEFAULT_TYPE):
             rules = await asyncio.to_thread(get_firewall_rules, chain_type)
             context.bot_data[f'fw_{chain_type}'] = rules
             if not rules:
-                text = with_menu_timestamp(f"🛡️ <b>Firewall ({chain_type.upper()})</b>\n\n<i>Tidak ada rule.</i>")
-                try: await query.edit_message_text(text, parse_mode='HTML', reply_markup=get_back_button())
-                except Exception as e: logger.debug("Non-fatal UI update error: %s", e)
+                text = with_menu_timestamp(
+                    f"🛡️ <b>Firewall ({chain_type.upper()})</b>\n\n<i>Tidak ada rule.</i>")
+                try:
+                    await query.edit_message_text(text, parse_mode='HTML', reply_markup=get_back_button())
+                except Exception as e:
+                    logger.debug("Non-fatal UI update error: %s", e)
                 return
             text, reply_markup = _format_firewall_page(rules, chain_type, 0)
-            try: await query.edit_message_text(text, parse_mode='HTML', reply_markup=append_back_button(reply_markup))
-            except Exception as e: logger.debug("Non-fatal UI update error: %s", e)
+            try:
+                await query.edit_message_text(text, parse_mode='HTML', reply_markup=append_back_button(reply_markup))
+            except Exception as e:
+                logger.debug("Non-fatal UI update error: %s", e)
         except Exception:
             try:
                 await query.edit_message_text(
@@ -869,12 +1008,17 @@ async def callback_firewall(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.answer(f"{'Disabling' if new_disabled else 'Enabling'} rule...")
         try:
             await asyncio.to_thread(toggle_firewall_rule, rule_id, chain_type, new_disabled)
-            catat(user.id, user.username, f"/firewall toggle {chain_type} #{rule_id}", f"{'disabled' if new_disabled else 'enabled'}")
+            catat(user.id,
+                  user.username,
+                  f"/firewall toggle {chain_type} #{rule_id}",
+                  f"{'disabled' if new_disabled else 'enabled'}")
             rules = await asyncio.to_thread(get_firewall_rules, chain_type)
             context.bot_data[f'fw_{chain_type}'] = rules
             text, reply_markup = _format_firewall_page(rules, chain_type, 0)
-            try: await query.edit_message_text(text, parse_mode='HTML', reply_markup=append_back_button(reply_markup))
-            except Exception as e: logger.debug("Non-fatal UI update error: %s", e)
+            try:
+                await query.edit_message_text(text, parse_mode='HTML', reply_markup=append_back_button(reply_markup))
+            except Exception as e:
+                logger.debug("Non-fatal UI update error: %s", e)
         except Exception:
             try:
                 await query.edit_message_text(
@@ -945,12 +1089,21 @@ def _format_clown_queue_page(queue_choices, page=0, per_page=8):
 
     nav = []
     if page > 0:
-        nav.append(InlineKeyboardButton("◀️ Prev", callback_data=f"clownqpage_{page - 1}"))
+        nav.append(
+            InlineKeyboardButton(
+                "◀️ Prev",
+                callback_data=f"clownqpage_{
+                    page - 1}"))
     if page < total_pages - 1:
-        nav.append(InlineKeyboardButton("Next ▶️", callback_data=f"clownqpage_{page + 1}"))
+        nav.append(
+            InlineKeyboardButton(
+                "Next ▶️",
+                callback_data=f"clownqpage_{
+                    page + 1}"))
     if nav:
         keyboard.append(nav)
-    keyboard.append([InlineKeyboardButton("🔄 Refresh Queue", callback_data="clownsrc_queue")])
+    keyboard.append([InlineKeyboardButton(
+        "🔄 Refresh Queue", callback_data="clownsrc_queue")])
 
     return with_menu_timestamp(text), InlineKeyboardMarkup(keyboard)
 
@@ -994,12 +1147,21 @@ def _format_clown_blocked_page(entries, page=0, per_page=8):
 
     nav = []
     if page > 0:
-        nav.append(InlineKeyboardButton("◀️ Prev", callback_data=f"clownlist_{page - 1}"))
+        nav.append(
+            InlineKeyboardButton(
+                "◀️ Prev",
+                callback_data=f"clownlist_{
+                    page - 1}"))
     if page < total_pages - 1:
-        nav.append(InlineKeyboardButton("Next ▶️", callback_data=f"clownlist_{page + 1}"))
+        nav.append(
+            InlineKeyboardButton(
+                "Next ▶️",
+                callback_data=f"clownlist_{
+                    page + 1}"))
     if nav:
         keyboard.append(nav)
-    keyboard.append([InlineKeyboardButton("🔄 Refresh", callback_data="clownlist_0")])
+    keyboard.append([InlineKeyboardButton(
+        "🔄 Refresh", callback_data="clownlist_0")])
 
     return with_menu_timestamp(text), InlineKeyboardMarkup(keyboard)
 
@@ -1027,8 +1189,7 @@ async def cmd_clown(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = with_menu_timestamp(
         "🤡 <b>MENU CLOWN</b>\n\n"
         "Pilih sumber IP yang ingin diblok, atau buka <b>Clown-list</b> untuk melihat "
-        "dan membuka blokir yang aktif."
-    )
+        "dan membuka blokir yang aktif.")
     reply_markup = append_back_button(_build_clown_menu_markup(), 'cmd_start')
 
     if update.callback_query:
@@ -1042,7 +1203,9 @@ async def cmd_clown(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.effective_message.reply_text(text, parse_mode='HTML', reply_markup=reply_markup)
 
 
-async def handle_clown_manual_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def handle_clown_manual_input(
+        update: Update,
+        context: ContextTypes.DEFAULT_TYPE):
     """Tangani input manual IP untuk menu clown."""
     if not context.user_data.get('awaiting_clown_ip'):
         return False
@@ -1103,7 +1266,10 @@ async def callback_clown(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.answer("Memuat daftar queue...")
         try:
             queue_choices = await asyncio.to_thread(_get_clown_queue_choices)
-            set_cache_with_ts(context.bot_data, "clown_queue_choices", queue_choices)
+            set_cache_with_ts(
+                context.bot_data,
+                "clown_queue_choices",
+                queue_choices)
             if not queue_choices:
                 await query.edit_message_text(
                     with_menu_timestamp(
@@ -1114,7 +1280,8 @@ async def callback_clown(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     reply_markup=get_back_button('cmd_clown')
                 )
                 return
-            text, reply_markup = _format_clown_queue_page(queue_choices, page=0)
+            text, reply_markup = _format_clown_queue_page(
+                queue_choices, page=0)
             await query.edit_message_text(
                 text,
                 parse_mode='HTML',
@@ -1135,7 +1302,8 @@ async def callback_clown(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except ValueError:
             await query.answer("Data tidak valid.", show_alert=True)
             return
-        queue_choices = get_cache_if_fresh(context.bot_data, "clown_queue_choices", ttl_seconds=900)
+        queue_choices = get_cache_if_fresh(
+            context.bot_data, "clown_queue_choices", ttl_seconds=900)
         if queue_choices is None:
             await query.answer("Data queue kedaluwarsa. Silakan refresh.", show_alert=True)
             return
@@ -1154,7 +1322,8 @@ async def callback_clown(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except ValueError:
             await query.answer("Data tidak valid.", show_alert=True)
             return
-        queue_choices = get_cache_if_fresh(context.bot_data, "clown_queue_choices", ttl_seconds=900)
+        queue_choices = get_cache_if_fresh(
+            context.bot_data, "clown_queue_choices", ttl_seconds=900)
         if queue_choices is None or idx < 0 or idx >= len(queue_choices):
             await query.answer("Pilihan queue tidak ditemukan.", show_alert=True)
             return
@@ -1213,11 +1382,11 @@ async def callback_clown(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # False = IP sudah ada (hanya update komentar).
             is_new = await asyncio.to_thread(block_ip, pending['ip'], pending['comment'], CLOWN_LIST_NAME)
             catat(
-                user.id,
-                user.username,
-                f"/clown block {pending['ip']}",
-                f"{'berhasil (baru)' if is_new else 'sudah ada, komentar diperbarui'} ({pending.get('source', '-')})",
-            )
+                user.id, user.username, f"/clown block {
+                    pending['ip']}", f"{
+                    'berhasil (baru)' if is_new else 'sudah ada, komentar diperbarui'} ({
+                    pending.get(
+                        'source', '-')})", )
             _clear_pending_clown_state(context)
             entries = await asyncio.to_thread(get_address_list_entries, CLOWN_LIST_NAME)
             entries.sort(key=lambda row: str(row.get('address') or ''))
@@ -1271,7 +1440,10 @@ async def callback_clown(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except ValueError:
             await query.answer("Data tidak valid.", show_alert=True)
             return
-        entries = get_cache_if_fresh(context.bot_data, "clown_block_entries", ttl_seconds=900)
+        entries = get_cache_if_fresh(
+            context.bot_data,
+            "clown_block_entries",
+            ttl_seconds=900)
         if entries is None or idx < 0 or idx >= len(entries):
             await query.answer("Data Clown-list kedaluwarsa. Silakan refresh.", show_alert=True)
             return
@@ -1282,16 +1454,23 @@ async def callback_clown(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.answer(f"Membuka block {target_ip}...")
         try:
             await asyncio.to_thread(unblock_ip, target_ip, CLOWN_LIST_NAME)
-            catat(user.id, user.username, f"/clown unblock {target_ip}", "berhasil")
+            catat(
+                user.id,
+                user.username,
+                f"/clown unblock {target_ip}",
+                "berhasil")
             refreshed = await asyncio.to_thread(get_address_list_entries, CLOWN_LIST_NAME)
             refreshed.sort(key=lambda row: str(row.get('address') or ''))
-            set_cache_with_ts(context.bot_data, "clown_block_entries", refreshed)
+            set_cache_with_ts(
+                context.bot_data,
+                "clown_block_entries",
+                refreshed)
             text, reply_markup = _format_clown_blocked_page(refreshed, page=0)
             success_text = text.replace(
                 "🤡 <b>CLOWN-LIST</b>",
-                f"✅ <b>IP {escape_html(target_ip)} berhasil di-unblock.</b>\n\n🤡 <b>CLOWN-LIST</b>",
-                1
-            )
+                f"✅ <b>IP {
+                    escape_html(target_ip)} berhasil di-unblock.</b>\n\n🤡 <b>CLOWN-LIST</b>",
+                1)
             await query.edit_message_text(
                 success_text,
                 parse_mode='HTML',
@@ -1308,25 +1487,30 @@ async def callback_clown(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ============ /uptime ============
 
+
 async def cmd_uptime(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Perintah /uptime - Laporan uptime per host."""
     user = update.effective_user
-    if await _check_access(update, user, "/uptime"): return
+    if await _check_access(update, user, "/uptime"):
+        return
 
     if update.callback_query:
         await update.callback_query.answer()
 
     days = 7
     if context.args:
-        try: days = int(context.args[0])
-        except ValueError: pass
+        try:
+            days = int(context.args[0])
+        except ValueError:
+            pass
     days = min(days, 90)  # Max 90 hari
 
     try:
         stats = await asyncio.to_thread(database.get_uptime_stats, days)
 
         if not stats:
-            text = with_menu_timestamp(f"📊 <b>Uptime Report ({days} hari)</b>\n\n<i>Tidak ada data insiden.</i>")
+            text = with_menu_timestamp(
+                f"📊 <b>Uptime Report ({days} hari)</b>\n\n<i>Tidak ada data insiden.</i>")
         else:
             text = (
                 f"📊 <b>Uptime Report ({days} hari terakhir)</b>\n"
@@ -1359,8 +1543,10 @@ async def cmd_uptime(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup = InlineKeyboardMarkup(keyboard)
         catat(user.id, user.username, f"/uptime {days}", "berhasil")
         if update.callback_query:
-            try: await update.callback_query.message.edit_text(text, parse_mode='HTML', reply_markup=append_back_button(reply_markup))
-            except Exception as e: logger.debug("Non-fatal UI update error: %s", e)
+            try:
+                await update.callback_query.message.edit_text(text, parse_mode='HTML', reply_markup=append_back_button(reply_markup))
+            except Exception as e:
+                logger.debug("Non-fatal UI update error: %s", e)
         else:
             await update.effective_message.reply_text(text, parse_mode='HTML', reply_markup=append_back_button(reply_markup))
 
@@ -1368,8 +1554,10 @@ async def cmd_uptime(update: Update, context: ContextTypes.DEFAULT_TYPE):
         catat(user.id, user.username, "/uptime", f"error: {e}")
         text = generic_error_html("Gagal memuat laporan uptime")
         if update.callback_query:
-            try: await update.callback_query.message.edit_text(text, parse_mode='HTML', reply_markup=get_back_button())
-            except Exception as e: logger.debug("Non-fatal UI update error: %s", e)
+            try:
+                await update.callback_query.message.edit_text(text, parse_mode='HTML', reply_markup=get_back_button())
+            except Exception as e:
+                logger.debug("Non-fatal UI update error: %s", e)
         else:
             await update.effective_message.reply_text(text, parse_mode='HTML', reply_markup=get_back_button())
 
@@ -1390,71 +1578,86 @@ async def callback_uptime(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def cmd_config(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Perintah /config - Lihat/ubah konfigurasi bot runtime.
-    
+
     Usage:
         /config              → Tampilkan semua config
         /config set KEY VAL  → Set nilai config
         /config reset KEY    → Reset ke default .env
     """
     user = update.effective_user
-    if await _check_access(update, user, "/config"): return
+    if await _check_access(update, user, "/config"):
+        return
 
     if update.callback_query:
         await update.callback_query.answer()
 
     args = context.args or []
-    
+
     # SET config
     if len(args) >= 3 and args[0].lower() == 'set':
         key = args[1].upper()
         value = args[2]
-        
+
         from services.config_manager import set_config
         success, msg = set_config(key, value, user.id, user.username)
-        
-        catat(user.id, user.username, f"/config set {key} {value}", "berhasil" if success else "gagal")
-        
+
+        catat(
+            user.id,
+            user.username,
+            f"/config set {key} {value}",
+            "berhasil" if success else "gagal")
+
         text = f"⚙️ <b>CONFIG SET</b>\n\n{msg}"
         if update.callback_query:
-            try: await update.callback_query.edit_message_text(text, parse_mode='HTML', reply_markup=get_back_button())
-            except Exception as e: logger.debug("Non-fatal UI update error: %s", e)
+            try:
+                await update.callback_query.edit_message_text(text, parse_mode='HTML', reply_markup=get_back_button())
+            except Exception as e:
+                logger.debug("Non-fatal UI update error: %s", e)
         else:
             await update.effective_message.reply_text(text, parse_mode='HTML', reply_markup=get_back_button())
         return
-    
+
     # RESET config
     if len(args) >= 2 and args[0].lower() == 'reset':
         key = args[1].upper()
-        
+
         from services.config_manager import reset_config
         success, msg = reset_config(key, user.id, user.username)
-        
-        catat(user.id, user.username, f"/config reset {key}", "berhasil" if success else "gagal")
-        
+
+        catat(
+            user.id,
+            user.username,
+            f"/config reset {key}",
+            "berhasil" if success else "gagal")
+
         text = f"⚙️ <b>CONFIG RESET</b>\n\n{msg}"
         if update.callback_query:
-            try: await update.callback_query.edit_message_text(text, parse_mode='HTML', reply_markup=get_back_button())
-            except Exception as e: logger.debug("Non-fatal UI update error: %s", e)
+            try:
+                await update.callback_query.edit_message_text(text, parse_mode='HTML', reply_markup=get_back_button())
+            except Exception as e:
+                logger.debug("Non-fatal UI update error: %s", e)
         else:
             await update.effective_message.reply_text(text, parse_mode='HTML', reply_markup=get_back_button())
         return
-    
+
     # SHOW all configs
     from services.config_manager import get_all_configs
     all_configs = get_all_configs()
-    
+
     text = "⚙️ <b>KONFIGURASI BOT</b>\n"
     text += "━" * 25 + "\n\n"
-    
+
     for category, items in all_configs.items():
         text += f"<b>{category}</b>\n"
         for item in items:
             icon = "🔧" if item['is_overridden'] else "📌"
             override_tag = " <i>(custom)</i>" if item['is_overridden'] else ""
-            text += f"  {icon} {item['label']}: <b>{item['value']}</b>{override_tag}\n"
+            text += f"  {icon} {
+                item['label']}: <b>{
+                item['value']}</b>{override_tag}\n"
             text += f"     <code>{item['key']}</code>\n"
         text += "\n"
-    
+
     text += (
         "━" * 25 + "\n"
         "<i>Cara set config (angka):</i>\n"
@@ -1468,17 +1671,19 @@ async def cmd_config(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "<code>/config reset CPU_THRESHOLD</code>"
     )
     text = with_menu_timestamp(text)
-    
+
     catat(user.id, user.username, "/config", "berhasil")
-    
+
     keyboard = [
         [InlineKeyboardButton("🔄 Refresh", callback_data="cmd_config")],
         [InlineKeyboardButton("🗑️ Reset Semua Data", callback_data="config_reset_confirm")],
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
-    
+
     if update.callback_query:
-        try: await update.callback_query.edit_message_text(text, parse_mode='HTML', reply_markup=append_back_button(reply_markup))
-        except Exception as e: logger.debug("Non-fatal UI update error: %s", e)
+        try:
+            await update.callback_query.edit_message_text(text, parse_mode='HTML', reply_markup=append_back_button(reply_markup))
+        except Exception as e:
+            logger.debug("Non-fatal UI update error: %s", e)
     else:
         await update.effective_message.reply_text(text, parse_mode='HTML', reply_markup=append_back_button(reply_markup))

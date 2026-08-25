@@ -5,10 +5,10 @@
 
 import time
 import logging
-import ftplib
+import ftplib  # nosec B402
 
 from .connection import pool
-from .decorators import with_retry, cached, to_bool, to_int
+from .decorators import with_retry, cached, to_int
 import core.config as cfg
 
 logger = logging.getLogger(__name__)
@@ -191,7 +191,7 @@ def _run_export_script(api, filename):
         existing = [s for s in all_scripts if s.get('name') == script_name]
 
         if existing:
-            scripts.update(**{'.id': existing[0]['.id'], 'source': source})
+            scripts('set', **{'.id': existing[0]['.id'], 'source': source})
         else:
             scripts.add(name=script_name, source=source)
 
@@ -261,7 +261,7 @@ def export_router_backup_ftp(backup_type="backup"):
 
         if ftp is None and _allow_plain_ftp_fallback(ftps_error):
             try:
-                plain = ftplib.FTP()
+                plain = ftplib.FTP()  # nosec B321
                 plain.connect(cfg.MIKROTIK_IP, int(cfg.MIKROTIK_FTP_PORT), timeout=10)
                 plain.login(cfg.MIKROTIK_USER, cfg.MIKROTIK_PASS)
                 ftp = plain

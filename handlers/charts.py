@@ -24,22 +24,22 @@ def _get_chart_keyboard():
     """
     return [
         [
-            InlineKeyboardButton("📈 CPU (1h)",  callback_data="chart_cpu_1"),
-            InlineKeyboardButton("📈 CPU (6h)",  callback_data="chart_cpu_6"),
+            InlineKeyboardButton("📈 CPU (1h)", callback_data="chart_cpu_1"),
+            InlineKeyboardButton("📈 CPU (6h)", callback_data="chart_cpu_6"),
             InlineKeyboardButton("📈 CPU (24h)", callback_data="chart_cpu_24"),
         ],
         [
-            InlineKeyboardButton("🧠 RAM (1h)",  callback_data="chart_ram_1"),
-            InlineKeyboardButton("🧠 RAM (6h)",  callback_data="chart_ram_6"),
+            InlineKeyboardButton("🧠 RAM (1h)", callback_data="chart_ram_1"),
+            InlineKeyboardButton("🧠 RAM (6h)", callback_data="chart_ram_6"),
             InlineKeyboardButton("🧠 RAM (24h)", callback_data="chart_ram_24"),
         ],
         [
-            InlineKeyboardButton("📶 Traffic (1h)",  callback_data="chart_traffic_1"),
-            InlineKeyboardButton("📶 Traffic (6h)",  callback_data="chart_traffic_6"),
+            InlineKeyboardButton("📶 Traffic (1h)", callback_data="chart_traffic_1"),
+            InlineKeyboardButton("📶 Traffic (6h)", callback_data="chart_traffic_6"),
             InlineKeyboardButton("📶 Traffic (24h)", callback_data="chart_traffic_24"),
         ],
         [
-            InlineKeyboardButton("📊 DHCP (6h)",  callback_data="chart_dhcp_6"),
+            InlineKeyboardButton("📊 DHCP (6h)", callback_data="chart_dhcp_6"),
             InlineKeyboardButton("📊 DHCP (24h)", callback_data="chart_dhcp_24"),
         ],
         [InlineKeyboardButton("🏠 Menu Utama", callback_data="cmd_start")],
@@ -55,7 +55,8 @@ _CHART_MENU_TEXT = (
     "⏱️ <i>Traffic chart inject data live saat dibuka.</i>"
 )
 # FIND-18 FIX: Jangan bake timestamp di module-level — terapkan fresh saat handler dipanggil.
-# Dulu: _CHART_MENU_TEXT = with_menu_timestamp(_CHART_MENU_TEXT)  ← stale jika bot lama running
+# Dulu: _CHART_MENU_TEXT = with_menu_timestamp(_CHART_MENU_TEXT)  ← stale
+# jika bot lama running
 
 
 # ============ LIVE TRAFFIC INJECT (B10-RC3) ============
@@ -83,7 +84,10 @@ async def _inject_live_traffic_point():
         if not active:
             return
 
-        traffic_tasks = [asyncio.to_thread(get_traffic, i['name']) for i in active]
+        traffic_tasks = [
+            asyncio.to_thread(
+                get_traffic,
+                i['name']) for i in active]
         results = await asyncio.gather(*traffic_tasks, return_exceptions=True)
 
         batch = []
@@ -97,7 +101,10 @@ async def _inject_live_traffic_point():
 
         if batch:
             await asyncio.to_thread(database.record_metrics_batch, batch)
-            logger.debug(f"Live traffic inject: {len(batch) // 2} interface(s)")
+            logger.debug(
+                f"Live traffic inject: {
+                    len(batch) //
+                    2} interface(s)")
 
     except Exception as e:
         logger.debug(f"Live traffic inject error (non-fatal): {e}")
@@ -276,7 +283,11 @@ async def callback_chart(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
         except Exception as e2:  # FIND-19 FIX: jangan shadow variabel e asli
             logger.debug("Suppressed non-fatal exception: %s", e2)
-async def callback_back_to_chart(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+
+async def callback_back_to_chart(
+        update: Update,
+        context: ContextTypes.DEFAULT_TYPE):
     """Handle kembali ke chart menu dari foto chart."""
     query = update.callback_query
     user = query.from_user
@@ -298,7 +309,9 @@ async def callback_back_to_chart(update: Update, context: ContextTypes.DEFAULT_T
     )
 
 
-async def callback_back_to_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def callback_back_to_start(
+        update: Update,
+        context: ContextTypes.DEFAULT_TYPE):
     """Handle kembali ke menu utama dari foto chart."""
     query = update.callback_query
     user = query.from_user
@@ -320,5 +333,3 @@ async def callback_back_to_start(update: Update, context: ContextTypes.DEFAULT_T
         parse_mode='HTML',
         reply_markup=reply_markup
     )
-
-

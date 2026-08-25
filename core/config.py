@@ -2,11 +2,13 @@
 # CONFIG - Konfigurasi Bot dari .env
 # ============================================
 
+import json as _json
+import time as _time
+from pathlib import Path
+import os
+from dotenv import load_dotenv, dotenv_values
 BOT_VERSION = "2.3.1"
 
-from dotenv import load_dotenv, dotenv_values
-import os
-from pathlib import Path
 
 # Load file .env
 env_path = Path('.') / '.env'
@@ -19,14 +21,28 @@ DATA_DIR.mkdir(parents=True, exist_ok=True)
 # ============ TELEGRAM ============
 
 TOKEN = os.getenv("TOKEN", "").strip()
-TELEGRAM_CONNECT_TIMEOUT = float(os.getenv("TELEGRAM_CONNECT_TIMEOUT", "10").strip())
+TELEGRAM_CONNECT_TIMEOUT = float(
+    os.getenv(
+        "TELEGRAM_CONNECT_TIMEOUT",
+        "10").strip())
 TELEGRAM_READ_TIMEOUT = float(os.getenv("TELEGRAM_READ_TIMEOUT", "20").strip())
-TELEGRAM_WRITE_TIMEOUT = float(os.getenv("TELEGRAM_WRITE_TIMEOUT", "20").strip())
+TELEGRAM_WRITE_TIMEOUT = float(
+    os.getenv(
+        "TELEGRAM_WRITE_TIMEOUT",
+        "20").strip())
 TELEGRAM_POOL_TIMEOUT = float(os.getenv("TELEGRAM_POOL_TIMEOUT", "10").strip())
-TELEGRAM_GET_UPDATES_READ_TIMEOUT = float(os.getenv("TELEGRAM_GET_UPDATES_READ_TIMEOUT", "35").strip())
-TELEGRAM_CONNECTION_POOL_SIZE = int(os.getenv("TELEGRAM_CONNECTION_POOL_SIZE", "32").strip())
-TELEGRAM_NETWORK_LOG_WINDOW_SEC = int(os.getenv("TELEGRAM_NETWORK_LOG_WINDOW_SEC", "300").strip())
-TELEGRAM_NETWORK_LOG_COOLDOWN_SEC = int(os.getenv("TELEGRAM_NETWORK_LOG_COOLDOWN_SEC", "120").strip())
+TELEGRAM_GET_UPDATES_READ_TIMEOUT = float(
+    os.getenv("TELEGRAM_GET_UPDATES_READ_TIMEOUT", "35").strip())
+TELEGRAM_CONNECTION_POOL_SIZE = int(
+    os.getenv(
+        "TELEGRAM_CONNECTION_POOL_SIZE",
+        "32").strip())
+TELEGRAM_NETWORK_LOG_WINDOW_SEC = int(
+    os.getenv(
+        "TELEGRAM_NETWORK_LOG_WINDOW_SEC",
+        "300").strip())
+TELEGRAM_NETWORK_LOG_COOLDOWN_SEC = int(
+    os.getenv("TELEGRAM_NETWORK_LOG_COOLDOWN_SEC", "120").strip())
 
 # Multi-admin: support ADMIN_IDS (comma-separated) atau fallback ke CHAT_ID
 _admin_ids_raw = os.getenv("ADMIN_IDS", "").strip()
@@ -34,7 +50,8 @@ _chat_id_raw = os.getenv("CHAT_ID", "0").strip()
 
 try:
     if _admin_ids_raw:
-        ADMIN_IDS = [int(x.strip()) for x in _admin_ids_raw.split(",") if x.strip()]
+        ADMIN_IDS = [int(x.strip())
+                     for x in _admin_ids_raw.split(",") if x.strip()]
     else:
         ADMIN_IDS = [int(_chat_id_raw)]
 except ValueError:
@@ -53,14 +70,35 @@ MIKROTIK_IP = os.getenv("MIKROTIK_IP", "").strip()
 MIKROTIK_USER = os.getenv("MIKROTIK_USER", "").strip()
 MIKROTIK_PASS = os.getenv("MIKROTIK_PASS", "").strip()
 MIKROTIK_PORT = int(os.getenv("MIKROTIK_PORT", "8728").strip())
-MIKROTIK_USE_SSL = os.getenv("MIKROTIK_USE_SSL", "False").strip().lower() in ['true', '1', 'yes']
-MIKROTIK_TLS_VERIFY = os.getenv("MIKROTIK_TLS_VERIFY", "True").strip().lower() in ['true', '1', 'yes']
+MIKROTIK_USE_SSL = os.getenv(
+    "MIKROTIK_USE_SSL",
+    "False").strip().lower() in [
+        'true',
+        '1',
+    'yes']
+MIKROTIK_TLS_VERIFY = os.getenv(
+    "MIKROTIK_TLS_VERIFY",
+    "True").strip().lower() in [
+        'true',
+        '1',
+    'yes']
 MIKROTIK_TLS_CA_FILE = os.getenv("MIKROTIK_TLS_CA_FILE", "").strip()
-MIKROTIK_FTP_TLS = os.getenv("MIKROTIK_FTP_TLS", "True").strip().lower() in ['true', '1', 'yes']
-MIKROTIK_FTP_ALLOW_INSECURE = os.getenv("MIKROTIK_FTP_ALLOW_INSECURE", "False").strip().lower() in ['true', '1', 'yes']
+MIKROTIK_FTP_TLS = os.getenv(
+    "MIKROTIK_FTP_TLS",
+    "True").strip().lower() in [
+        'true',
+        '1',
+    'yes']
+MIKROTIK_FTP_ALLOW_INSECURE = os.getenv(
+    "MIKROTIK_FTP_ALLOW_INSECURE",
+    "False").strip().lower() in [
+        'true',
+        '1',
+    'yes']
 MIKROTIK_FTP_PORT = int(os.getenv("MIKROTIK_FTP_PORT", "21").strip())
 
-# Device identity mapping (MAC → Label) untuk membedakan perangkat fisik saat swap
+# Device identity mapping (MAC → Label) untuk membedakan perangkat fisik
+# saat swap
 _mikrotik_devices_raw = os.getenv("MIKROTIK_DEVICES", "").strip()
 MIKROTIK_DEVICES = {}
 for _dev_entry in _mikrotik_devices_raw.split(","):
@@ -74,14 +112,26 @@ for _dev_entry in _mikrotik_devices_raw.split(","):
         MIKROTIK_DEVICES[_dev_mac] = _dev_label
 
 # Connection tuning untuk skenario hot-swap/unstable link
-MIKROTIK_MAX_CONNECTIONS = int(os.getenv("MIKROTIK_MAX_CONNECTIONS", "12").strip())
-MIKROTIK_RECONNECT_BASE_BACKOFF = int(os.getenv("MIKROTIK_RECONNECT_BASE_BACKOFF", "1").strip())
-MIKROTIK_RECONNECT_MAX_BACKOFF = int(os.getenv("MIKROTIK_RECONNECT_MAX_BACKOFF", "30").strip())
-MIKROTIK_RESET_ALL_COOLDOWN_SEC = int(os.getenv("MIKROTIK_RESET_ALL_COOLDOWN_SEC", "15").strip())
+MIKROTIK_MAX_CONNECTIONS = int(
+    os.getenv(
+        "MIKROTIK_MAX_CONNECTIONS",
+        "12").strip())
+MIKROTIK_RECONNECT_BASE_BACKOFF = int(
+    os.getenv("MIKROTIK_RECONNECT_BASE_BACKOFF", "1").strip())
+MIKROTIK_RECONNECT_MAX_BACKOFF = int(
+    os.getenv(
+        "MIKROTIK_RECONNECT_MAX_BACKOFF",
+        "30").strip())
+MIKROTIK_RESET_ALL_COOLDOWN_SEC = int(
+    os.getenv(
+        "MIKROTIK_RESET_ALL_COOLDOWN_SEC",
+        "15").strip())
 ASYNC_THREAD_WORKERS = int(os.getenv("ASYNC_THREAD_WORKERS", "8").strip())
-MIKROTIK_CONNECTION_MAX_AGE_SEC = int(os.getenv("MIKROTIK_CONNECTION_MAX_AGE_SEC", "0").strip())
+MIKROTIK_CONNECTION_MAX_AGE_SEC = int(
+    os.getenv("MIKROTIK_CONNECTION_MAX_AGE_SEC", "0").strip())
 
-# IP host yang menjalankan bot (untuk filter log, agar login bot tidak masuk alert)
+# IP host yang menjalankan bot (untuk filter log, agar login bot tidak
+# masuk alert)
 BOT_IP = os.getenv("BOT_IP", "").strip()
 
 # Nama institusi (tampil di report & status)
@@ -94,7 +144,10 @@ INSTITUTION_NAME = os.getenv("INSTITUTION_NAME", "RSIA Palaraya").strip()
 MONITOR_INTERVAL = int(os.getenv("MONITOR_INTERVAL", "300").strip())
 
 # Interval cek resource CPU/RAM dalam detik.
-RESOURCE_MONITOR_INTERVAL = int(os.getenv("RESOURCE_MONITOR_INTERVAL", "60").strip())
+RESOURCE_MONITOR_INTERVAL = int(
+    os.getenv(
+        "RESOURCE_MONITOR_INTERVAL",
+        "60").strip())
 
 # Interval netwatch matrix monitor dalam detik.
 NETWATCH_INTERVAL = int(os.getenv("NETWATCH_INTERVAL", "15").strip())
@@ -103,16 +156,25 @@ NETWATCH_INTERVAL = int(os.getenv("NETWATCH_INTERVAL", "15").strip())
 CPU_THRESHOLD = int(os.getenv("CPU_THRESHOLD", "80").strip())
 RAM_THRESHOLD = int(os.getenv("RAM_THRESHOLD", "90").strip())
 
-# Interface yang di-skip dari monitoring (comma-separated, kosongkan jika tidak ada)
+# Interface yang di-skip dari monitoring (comma-separated, kosongkan jika
+# tidak ada)
 _ignore_raw = os.getenv("MONITOR_IGNORE_IFACE", "").strip()
-MONITOR_IGNORE_IFACE = set(x.strip() for x in _ignore_raw.split(",") if x.strip())
+MONITOR_IGNORE_IFACE = set(x.strip()
+                           for x in _ignore_raw.split(",") if x.strip())
 
 # Monitoring VPN tunnel bisa dimatikan total jika jaringan tidak memakai VPN.
-MONITOR_VPN_ENABLED = os.getenv("MONITOR_VPN_ENABLED", "True").strip().lower() in ['true', '1', 'yes']
+MONITOR_VPN_ENABLED = os.getenv(
+    "MONITOR_VPN_ENABLED",
+    "True").strip().lower() in [
+        'true',
+        '1',
+    'yes']
 _vpn_ignore_raw = os.getenv("MONITOR_VPN_IGNORE_NAMES", "").strip()
-MONITOR_VPN_IGNORE_NAMES = set(x.strip().lower() for x in _vpn_ignore_raw.split(",") if x.strip())
+MONITOR_VPN_IGNORE_NAMES = set(x.strip().lower()
+                               for x in _vpn_ignore_raw.split(",") if x.strip())
 _netwatch_ignore_hosts_raw = os.getenv("NETWATCH_IGNORE_HOSTS", "").strip()
-NETWATCH_IGNORE_HOSTS = [x.strip() for x in _netwatch_ignore_hosts_raw.split(",") if x.strip()]
+NETWATCH_IGNORE_HOSTS = [
+    x.strip() for x in _netwatch_ignore_hosts_raw.split(",") if x.strip()]
 
 
 def _parse_host_int_map(raw_value):
@@ -132,48 +194,102 @@ def _parse_host_int_map(raw_value):
     return result
 
 
-_netwatch_fail_threshold_overrides_raw = os.getenv("NETWATCH_FAIL_THRESHOLD_OVERRIDES", "").strip()
-NETWATCH_FAIL_THRESHOLD_OVERRIDES = _parse_host_int_map(_netwatch_fail_threshold_overrides_raw)
+_netwatch_fail_threshold_overrides_raw = os.getenv(
+    "NETWATCH_FAIL_THRESHOLD_OVERRIDES", "").strip()
+NETWATCH_FAIL_THRESHOLD_OVERRIDES = _parse_host_int_map(
+    _netwatch_fail_threshold_overrides_raw)
 
-# Ambang batas indikator putus jaringan (Berapa kali ping gagal berturut-turut sebelum alert)
+# Ambang batas indikator putus jaringan (Berapa kali ping gagal
+# berturut-turut sebelum alert)
 PING_FAIL_THRESHOLD = int(os.getenv("PING_FAIL_THRESHOLD", "3").strip())
 
 # Jam kirim daily report (format 24h, default jam 7 pagi)
 DAILY_REPORT_HOUR = int(os.getenv("DAILY_REPORT_HOUR", "7").strip())
 
 # Threshold Traffic Alert (Dalam Mbps). Akan dikonversi ke bytes di monitor.py
-TRAFFIC_THRESHOLD_MBPS = int(os.getenv("TRAFFIC_THRESHOLD_MBPS", "100").strip())
+TRAFFIC_THRESHOLD_MBPS = int(
+    os.getenv(
+        "TRAFFIC_THRESHOLD_MBPS",
+        "100").strip())
 
 # Threshold traffic per host untuk alert kebocoran (Mbps, 0 = nonaktif)
-TRAFFIC_LEAK_THRESHOLD_MBPS = int(os.getenv("TRAFFIC_LEAK_THRESHOLD_MBPS", "50").strip())
+TRAFFIC_LEAK_THRESHOLD_MBPS = int(
+    os.getenv(
+        "TRAFFIC_LEAK_THRESHOLD_MBPS",
+        "50").strip())
 
-# Daftar nama host/queue yang dikecualikan dari traffic leak alert (comma-separated)
+# Daftar nama host/queue yang dikecualikan dari traffic leak alert
+# (comma-separated)
 _leak_whitelist_raw = os.getenv("TRAFFIC_LEAK_WHITELIST", "").strip()
-TRAFFIC_LEAK_WHITELIST = [x.strip() for x in _leak_whitelist_raw.split(",") if x.strip()]
+TRAFFIC_LEAK_WHITELIST = [x.strip()
+                          for x in _leak_whitelist_raw.split(",") if x.strip()]
 
 # Top bandwidth consumer alert engine (queue-based)
-TOP_BW_ALERT_ENABLED = os.getenv("TOP_BW_ALERT_ENABLED", "True").strip().lower() in ['true', '1', 'yes']
+TOP_BW_ALERT_ENABLED = os.getenv(
+    "TOP_BW_ALERT_ENABLED",
+    "True").strip().lower() in [
+        'true',
+        '1',
+    'yes']
 TOP_BW_ALERT_TOP_N = int(os.getenv("TOP_BW_ALERT_TOP_N", "3").strip())
 TOP_BW_ALERT_WARN_MBPS = int(os.getenv("TOP_BW_ALERT_WARN_MBPS", "50").strip())
-TOP_BW_ALERT_CRIT_MBPS = int(os.getenv("TOP_BW_ALERT_CRIT_MBPS", "100").strip())
-TOP_BW_ALERT_CONSECUTIVE_HITS = int(os.getenv("TOP_BW_ALERT_CONSECUTIVE_HITS", "3").strip())
-TOP_BW_ALERT_RECOVERY_HITS = int(os.getenv("TOP_BW_ALERT_RECOVERY_HITS", "2").strip())
-TOP_BW_ALERT_COOLDOWN_SEC = int(os.getenv("TOP_BW_ALERT_COOLDOWN_SEC", "900").strip())
-TOP_BW_ALERT_MIN_TX_MBPS = int(os.getenv("TOP_BW_ALERT_MIN_TX_MBPS", "1").strip())
-TOP_BW_ALERT_MIN_RX_MBPS = int(os.getenv("TOP_BW_ALERT_MIN_RX_MBPS", "1").strip())
+TOP_BW_ALERT_CRIT_MBPS = int(
+    os.getenv(
+        "TOP_BW_ALERT_CRIT_MBPS",
+        "100").strip())
+TOP_BW_ALERT_CONSECUTIVE_HITS = int(
+    os.getenv(
+        "TOP_BW_ALERT_CONSECUTIVE_HITS",
+        "3").strip())
+TOP_BW_ALERT_RECOVERY_HITS = int(
+    os.getenv(
+        "TOP_BW_ALERT_RECOVERY_HITS",
+        "2").strip())
+TOP_BW_ALERT_COOLDOWN_SEC = int(
+    os.getenv(
+        "TOP_BW_ALERT_COOLDOWN_SEC",
+        "900").strip())
+TOP_BW_ALERT_MIN_TX_MBPS = int(
+    os.getenv(
+        "TOP_BW_ALERT_MIN_TX_MBPS",
+        "1").strip())
+TOP_BW_ALERT_MIN_RX_MBPS = int(
+    os.getenv(
+        "TOP_BW_ALERT_MIN_RX_MBPS",
+        "1").strip())
 TOP_BW_ALERT_INTERVAL = int(os.getenv("TOP_BW_ALERT_INTERVAL", "15").strip())
-_top_bw_ignore_queues_raw = os.getenv("TOP_BW_ALERT_IGNORE_QUEUES", "TOTAL-BANDWIDTH").strip()
-TOP_BW_ALERT_IGNORE_QUEUES = [x.strip() for x in _top_bw_ignore_queues_raw.split(",") if x.strip()]
+_top_bw_ignore_queues_raw = os.getenv(
+    "TOP_BW_ALERT_IGNORE_QUEUES",
+    "TOTAL-BANDWIDTH").strip()
+TOP_BW_ALERT_IGNORE_QUEUES = [
+    x.strip() for x in _top_bw_ignore_queues_raw.split(",") if x.strip()]
 
 # RX Packet Anomaly Detection (interface-based)
-RX_ANOMALY_ENABLED = os.getenv("RX_ANOMALY_ENABLED", "True").strip().lower() in ['true', '1', 'yes']
+RX_ANOMALY_ENABLED = os.getenv(
+    "RX_ANOMALY_ENABLED",
+    "True").strip().lower() in [
+        'true',
+        '1',
+    'yes']
 RX_ANOMALY_WARN_PPS = int(os.getenv("RX_ANOMALY_WARN_PPS", "5000").strip())
 RX_ANOMALY_CRIT_PPS = int(os.getenv("RX_ANOMALY_CRIT_PPS", "10000").strip())
-RX_ANOMALY_CONSECUTIVE_HITS = int(os.getenv("RX_ANOMALY_CONSECUTIVE_HITS", "3").strip())
-RX_ANOMALY_RECOVERY_HITS = int(os.getenv("RX_ANOMALY_RECOVERY_HITS", "2").strip())
-RX_ANOMALY_COOLDOWN_SEC = int(os.getenv("RX_ANOMALY_COOLDOWN_SEC", "900").strip())
-_rx_anomaly_iface_raw = os.getenv("RX_ANOMALY_WATCH_IFACE", "local").strip()
-RX_ANOMALY_WATCH_IFACE = [x.strip() for x in _rx_anomaly_iface_raw.split(",") if x.strip()]
+RX_ANOMALY_CONSECUTIVE_HITS = int(
+    os.getenv(
+        "RX_ANOMALY_CONSECUTIVE_HITS",
+        "3").strip())
+RX_ANOMALY_RECOVERY_HITS = int(
+    os.getenv(
+        "RX_ANOMALY_RECOVERY_HITS",
+        "2").strip())
+RX_ANOMALY_COOLDOWN_SEC = int(
+    os.getenv(
+        "RX_ANOMALY_COOLDOWN_SEC",
+        "900").strip())
+_rx_anomaly_iface_raw = os.getenv(
+    "RX_ANOMALY_WATCH_IFACE",
+    "local,ether3").strip()
+RX_ANOMALY_WATCH_IFACE = [x.strip()
+                          for x in _rx_anomaly_iface_raw.split(",") if x.strip()]
 
 # Guardrail: crit tidak boleh di bawah warn
 if RX_ANOMALY_CRIT_PPS < RX_ANOMALY_WARN_PPS:
@@ -188,14 +304,28 @@ PING_COUNT = int(os.getenv("PING_COUNT", "4").strip())
 
 # Interval log monitor dalam detik (default 30)
 MONITOR_LOG_INTERVAL = int(os.getenv("MONITOR_LOG_INTERVAL", "30").strip())
-MONITOR_LOG_FETCH_LINES = int(os.getenv("MONITOR_LOG_FETCH_LINES", "100").strip())
-NETWATCH_PING_CONCURRENCY = int(os.getenv("NETWATCH_PING_CONCURRENCY", "4").strip())
-BRUTEFORCE_FAIL_THRESHOLD = int(os.getenv("BRUTEFORCE_FAIL_THRESHOLD", "5").strip())
-API_ACCOUNT_DEDUP_WINDOW_SEC = int(os.getenv("API_ACCOUNT_DEDUP_WINDOW_SEC", "300").strip())
+MONITOR_LOG_FETCH_LINES = int(
+    os.getenv(
+        "MONITOR_LOG_FETCH_LINES",
+        "100").strip())
+NETWATCH_PING_CONCURRENCY = int(
+    os.getenv(
+        "NETWATCH_PING_CONCURRENCY",
+        "4").strip())
+BRUTEFORCE_FAIL_THRESHOLD = int(
+    os.getenv(
+        "BRUTEFORCE_FAIL_THRESHOLD",
+        "5").strip())
+API_ACCOUNT_DEDUP_WINDOW_SEC = int(
+    os.getenv(
+        "API_ACCOUNT_DEDUP_WINDOW_SEC",
+        "300").strip())
 _api_skip_users_raw = os.getenv("API_ACCOUNT_SKIP_USERS", "").strip()
-API_ACCOUNT_SKIP_USERS = [x.strip().lower() for x in _api_skip_users_raw.split(",") if x.strip()]
+API_ACCOUNT_SKIP_USERS = [x.strip().lower()
+                          for x in _api_skip_users_raw.split(",") if x.strip()]
 _auto_block_trusted_raw = os.getenv("AUTO_BLOCK_TRUSTED_IPS", "").strip()
-AUTO_BLOCK_TRUSTED_IPS = [x.strip() for x in _auto_block_trusted_raw.split(",") if x.strip()]
+AUTO_BLOCK_TRUSTED_IPS = [x.strip()
+                          for x in _auto_block_trusted_raw.split(",") if x.strip()]
 _dns_check_raw = os.getenv("DNS_CHECK_DOMAIN", "google.com").strip()
 DNS_CHECK_DOMAINS = [x.strip() for x in _dns_check_raw.split(",") if x.strip()]
 if not DNS_CHECK_DOMAINS:
@@ -204,7 +334,8 @@ DNS_CHECK_DOMAIN = DNS_CHECK_DOMAINS[0]
 
 # Netwatch hosts lama (dijaga untuk kompatibilitas jika ada)
 _netwatch_hosts_raw = os.getenv("NETWATCH_HOSTS", "").strip()
-NETWATCH_HOSTS = [x.strip() for x in _netwatch_hosts_raw.split(",") if x.strip()]
+NETWATCH_HOSTS = [x.strip()
+                  for x in _netwatch_hosts_raw.split(",") if x.strip()]
 
 # ============ ADVANCED MONITORING (RS LEVEL) ============
 GW_WAN = os.getenv("GW_WAN", "192.168.1.1").strip()
@@ -212,26 +343,44 @@ GW_INET = os.getenv("GW_INET", "1.1.1.1").strip()
 
 # Interface keyword matching untuk snapshot (WAN vs LAN error reporting)
 # C1 FIX: strip() per item agar spasi di .env tidak merusak matching
-WAN_IFACE_KEYWORDS = [kw.strip() for kw in os.getenv("WAN_IFACE_KEYWORDS", "indibiz,ether1,wan,sfp1").split(",") if kw.strip()]
-LAN_IFACE_KEYWORDS = [kw.strip() for kw in os.getenv("LAN_IFACE_KEYWORDS", "local,ether2,bridge,lan").split(",") if kw.strip()]
+WAN_IFACE_KEYWORDS = [
+    kw.strip() for kw in os.getenv(
+        "WAN_IFACE_KEYWORDS",
+        "indibiz,ether1,wan,sfp1").split(",") if kw.strip()]
+LAN_IFACE_KEYWORDS = [
+    kw.strip() for kw in os.getenv(
+        "LAN_IFACE_KEYWORDS",
+        "local,ether2,bridge,lan").split(",") if kw.strip()]
 
-# Recovery confirmation: berapa kali ping berhasil sebelum declare RECOVERY (anti-flapping)
+# Recovery confirmation: berapa kali ping berhasil sebelum declare
+# RECOVERY (anti-flapping)
 RECOVERY_CONFIRM_COUNT = int(os.getenv("RECOVERY_CONFIRM_COUNT", "2").strip())
 # Recovery hold time: host harus stabil UP selama N detik sebelum kirim RECOVERY.
 # Mengurangi false-recovery saat link/device flapping.
-RECOVERY_MIN_UP_SECONDS = int(os.getenv("RECOVERY_MIN_UP_SECONDS", "90").strip())
-# Timeout seluruh siklus netwatch berturut-turut sebelum status monitor dianggap degraded.
-NETWATCH_CYCLE_TIMEOUT_THRESHOLD = int(os.getenv("NETWATCH_CYCLE_TIMEOUT_THRESHOLD", "2").strip())
+RECOVERY_MIN_UP_SECONDS = int(
+    os.getenv(
+        "RECOVERY_MIN_UP_SECONDS",
+        "90").strip())
+# Timeout seluruh siklus netwatch berturut-turut sebelum status monitor
+# dianggap degraded.
+NETWATCH_CYCLE_TIMEOUT_THRESHOLD = int(
+    os.getenv("NETWATCH_CYCLE_TIMEOUT_THRESHOLD", "2").strip())
 # Cooldown notifikasi degraded agar tidak spam.
-NETWATCH_DEGRADED_ALERT_COOLDOWN_SEC = int(os.getenv("NETWATCH_DEGRADED_ALERT_COOLDOWN_SEC", "300").strip())
+NETWATCH_DEGRADED_ALERT_COOLDOWN_SEC = int(
+    os.getenv("NETWATCH_DEGRADED_ALERT_COOLDOWN_SEC", "300").strip())
 # Recovery khusus host critical agar tidak flapping saat device memang mati.
-CRITICAL_RECOVERY_CONFIRM_COUNT = int(os.getenv("CRITICAL_RECOVERY_CONFIRM_COUNT", "3").strip())
-CRITICAL_RECOVERY_MIN_UP_SECONDS = int(os.getenv("CRITICAL_RECOVERY_MIN_UP_SECONDS", "180").strip())
+CRITICAL_RECOVERY_CONFIRM_COUNT = int(
+    os.getenv("CRITICAL_RECOVERY_CONFIRM_COUNT", "3").strip())
+CRITICAL_RECOVERY_MIN_UP_SECONDS = int(
+    os.getenv(
+        "CRITICAL_RECOVERY_MIN_UP_SECONDS",
+        "180").strip())
 
 # Ping success ratio minimum agar host dianggap UP pada 1 siklus netwatch.
 # Contoh default 0.5 dan PING_COUNT=4 -> minimal 2 reply.
 try:
-    NETWATCH_UP_MIN_SUCCESS_RATIO = float(os.getenv("NETWATCH_UP_MIN_SUCCESS_RATIO", "0.5").strip())
+    NETWATCH_UP_MIN_SUCCESS_RATIO = float(
+        os.getenv("NETWATCH_UP_MIN_SUCCESS_RATIO", "0.5").strip())
 except (ValueError, TypeError):
     NETWATCH_UP_MIN_SUCCESS_RATIO = 0.5
 
@@ -268,12 +417,15 @@ for s in _critical_devices_raw.split(","):
 
 # 2) Lookup otomatis berdasarkan hostname/comment DHCP lease.
 _critical_names_raw = os.getenv("CRITICAL_DEVICE_NAMES", "").strip()
-CRITICAL_DEVICE_NAMES = [x.strip() for x in _critical_names_raw.split(",") if x.strip()]
+CRITICAL_DEVICE_NAMES = [x.strip()
+                         for x in _critical_names_raw.split(",") if x.strip()]
 
 # Window monitor per perangkat penting.
 # Format: NAMA_DEVICE=HH:MM-HH:MM (pisah koma untuk banyak device).
 # Contoh:
 # CRITICAL_DEVICE_WINDOWS=KOMP PENDAFTARAN POLI=07:00-17:00
+
+
 def _parse_hhmm_to_minutes(value):
     try:
         text = str(value or "").strip()
@@ -318,7 +470,8 @@ if _tcp_raw:
     for s in _tcp_raw.split(","):
         parts = s.split(":")
         if len(parts) == 3:
-            TCP_SERVICES.append({"name": parts[0].strip(), "ip": parts[1].strip(), "port": int(parts[2].strip())})
+            TCP_SERVICES.append({"name": parts[0].strip(
+            ), "ip": parts[1].strip(), "port": int(parts[2].strip())})
 
 DHCP_POOL_SIZE = int(os.getenv("DHCP_POOL_SIZE", "60").strip())
 DHCP_ALERT_THRESHOLD = int(os.getenv("DHCP_ALERT_THRESHOLD", "85").strip())
@@ -327,12 +480,14 @@ _macs_raw = os.getenv("CRITICAL_MACS", "").strip()
 CRITICAL_MACS = {}
 if _macs_raw:
     for m in _macs_raw.split(","):
-        # Format: IP=MAC (gunakan = sebagai separator agar tidak konflik dengan : di MAC address)
+        # Format: IP=MAC (gunakan = sebagai separator agar tidak konflik dengan
+        # : di MAC address)
         if "=" in m:
             parts = m.split("=", 1)
             CRITICAL_MACS[parts[0].strip()] = parts[1].strip().lower()
         elif ":" in m:
-            # Backward compat: coba split hanya jika format IP:placeholder (tanpa MAC asli)
+            # Backward compat: coba split hanya jika format IP:placeholder
+            # (tanpa MAC asli)
             parts = m.split(":", 1)
             CRITICAL_MACS[parts[0].strip()] = parts[1].strip().lower()
 
@@ -352,7 +507,10 @@ RATE_LIMIT_PER_MINUTE = int(os.getenv("RATE_LIMIT_PER_MINUTE", "20").strip())
 # ============ ALERTING ============
 
 # Escalation timeout (menit) - kirim ulang alert jika tidak di-ack
-ALERT_ESCALATION_MINUTES = int(os.getenv("ALERT_ESCALATION_MINUTES", "15").strip())
+ALERT_ESCALATION_MINUTES = int(
+    os.getenv(
+        "ALERT_ESCALATION_MINUTES",
+        "15").strip())
 
 # Digest threshold - batch alert jika lebih dari N alert dalam window
 ALERT_DIGEST_THRESHOLD = int(os.getenv("ALERT_DIGEST_THRESHOLD", "5").strip())
@@ -361,10 +519,19 @@ ALERT_DIGEST_THRESHOLD = int(os.getenv("ALERT_DIGEST_THRESHOLD", "5").strip())
 ALERT_DIGEST_WINDOW = int(os.getenv("ALERT_DIGEST_WINDOW", "300").strip())
 
 # TTL lock IPC ACK lintas-proses (detik) agar lock stale bisa direclaim.
-ALERT_IPC_LOCK_STALE_SEC = int(os.getenv("ALERT_IPC_LOCK_STALE_SEC", "15").strip())
+ALERT_IPC_LOCK_STALE_SEC = int(
+    os.getenv(
+        "ALERT_IPC_LOCK_STALE_SEC",
+        "15").strip())
 
-# Jika true, monitor disarm saat boot dan mulai kirim alert setelah admin menjalankan /start.
-ALERT_REQUIRE_START = os.getenv("ALERT_REQUIRE_START", "False").strip().lower() in ['true', '1', 'yes']
+# Jika true, monitor disarm saat boot dan mulai kirim alert setelah admin
+# menjalankan /start.
+ALERT_REQUIRE_START = os.getenv(
+    "ALERT_REQUIRE_START",
+    "False").strip().lower() in [
+        'true',
+        '1',
+    'yes']
 
 # Guardrail: batas critical tidak boleh di bawah warning.
 if TOP_BW_ALERT_CRIT_MBPS < TOP_BW_ALERT_WARN_MBPS:
@@ -384,35 +551,52 @@ LOG_BACKUP_COUNT = int(os.getenv("LOG_BACKUP_COUNT", "3").strip())
 
 def _assert_range(name, value, min_value, max_value):
     if value < min_value or value > max_value:
-        raise ValueError(f"{name} di luar batas aman ({min_value}-{max_value}): {value}")
+        raise ValueError(
+            f"{name} di luar batas aman ({min_value}-{max_value}): {value}")
 
 
 _assert_range("MIKROTIK_PORT", MIKROTIK_PORT, 1, 65535)
 _assert_range("MIKROTIK_FTP_PORT", MIKROTIK_FTP_PORT, 1, 65535)
 _assert_range("MIKROTIK_MAX_CONNECTIONS", MIKROTIK_MAX_CONNECTIONS, 1, 256)
-_assert_range("MIKROTIK_RECONNECT_BASE_BACKOFF", MIKROTIK_RECONNECT_BASE_BACKOFF, 1, 300)
-_assert_range("MIKROTIK_RECONNECT_MAX_BACKOFF", MIKROTIK_RECONNECT_MAX_BACKOFF, 1, 3600)
-_assert_range("MIKROTIK_RESET_ALL_COOLDOWN_SEC", MIKROTIK_RESET_ALL_COOLDOWN_SEC, 5, 3600)
+_assert_range("MIKROTIK_RECONNECT_BASE_BACKOFF",
+              MIKROTIK_RECONNECT_BASE_BACKOFF, 1, 300)
+_assert_range("MIKROTIK_RECONNECT_MAX_BACKOFF",
+              MIKROTIK_RECONNECT_MAX_BACKOFF, 1, 3600)
+_assert_range("MIKROTIK_RESET_ALL_COOLDOWN_SEC",
+              MIKROTIK_RESET_ALL_COOLDOWN_SEC, 5, 3600)
 _assert_range("ASYNC_THREAD_WORKERS", ASYNC_THREAD_WORKERS, 2, 128)
-_assert_range("MIKROTIK_CONNECTION_MAX_AGE_SEC", MIKROTIK_CONNECTION_MAX_AGE_SEC, 0, 86_400)
+_assert_range("MIKROTIK_CONNECTION_MAX_AGE_SEC",
+              MIKROTIK_CONNECTION_MAX_AGE_SEC, 0, 86_400)
 _assert_range("MONITOR_INTERVAL", MONITOR_INTERVAL, 10, 86400)
-_assert_range("RESOURCE_MONITOR_INTERVAL", RESOURCE_MONITOR_INTERVAL, 10, 86400)
+_assert_range(
+    "RESOURCE_MONITOR_INTERVAL",
+    RESOURCE_MONITOR_INTERVAL,
+    10,
+    86400)
 _assert_range("NETWATCH_INTERVAL", NETWATCH_INTERVAL, 5, 3600)
 _assert_range("MONITOR_LOG_INTERVAL", MONITOR_LOG_INTERVAL, 5, 3600)
 _assert_range("MONITOR_LOG_FETCH_LINES", MONITOR_LOG_FETCH_LINES, 20, 1000)
 _assert_range("NETWATCH_PING_CONCURRENCY", NETWATCH_PING_CONCURRENCY, 1, 32)
 _assert_range("BRUTEFORCE_FAIL_THRESHOLD", BRUTEFORCE_FAIL_THRESHOLD, 3, 20)
-_assert_range("API_ACCOUNT_DEDUP_WINDOW_SEC", API_ACCOUNT_DEDUP_WINDOW_SEC, 30, 86_400)
+_assert_range(
+    "API_ACCOUNT_DEDUP_WINDOW_SEC",
+    API_ACCOUNT_DEDUP_WINDOW_SEC,
+    30,
+    86_400)
 _assert_range("CPU_THRESHOLD", CPU_THRESHOLD, 10, 100)
 _assert_range("RAM_THRESHOLD", RAM_THRESHOLD, 10, 100)
 _assert_range("DISK_THRESHOLD", DISK_THRESHOLD, 10, 100)
 _assert_range("PING_FAIL_THRESHOLD", PING_FAIL_THRESHOLD, 1, 20)
 _assert_range("RECOVERY_CONFIRM_COUNT", RECOVERY_CONFIRM_COUNT, 1, 20)
 _assert_range("RECOVERY_MIN_UP_SECONDS", RECOVERY_MIN_UP_SECONDS, 0, 3600)
-_assert_range("NETWATCH_CYCLE_TIMEOUT_THRESHOLD", NETWATCH_CYCLE_TIMEOUT_THRESHOLD, 1, 20)
-_assert_range("NETWATCH_DEGRADED_ALERT_COOLDOWN_SEC", NETWATCH_DEGRADED_ALERT_COOLDOWN_SEC, 30, 86_400)
-_assert_range("CRITICAL_RECOVERY_CONFIRM_COUNT", CRITICAL_RECOVERY_CONFIRM_COUNT, 1, 20)
-_assert_range("CRITICAL_RECOVERY_MIN_UP_SECONDS", CRITICAL_RECOVERY_MIN_UP_SECONDS, 0, 3600)
+_assert_range("NETWATCH_CYCLE_TIMEOUT_THRESHOLD",
+              NETWATCH_CYCLE_TIMEOUT_THRESHOLD, 1, 20)
+_assert_range("NETWATCH_DEGRADED_ALERT_COOLDOWN_SEC",
+              NETWATCH_DEGRADED_ALERT_COOLDOWN_SEC, 30, 86_400)
+_assert_range("CRITICAL_RECOVERY_CONFIRM_COUNT",
+              CRITICAL_RECOVERY_CONFIRM_COUNT, 1, 20)
+_assert_range("CRITICAL_RECOVERY_MIN_UP_SECONDS",
+              CRITICAL_RECOVERY_MIN_UP_SECONDS, 0, 3600)
 _assert_range("PING_COUNT", PING_COUNT, 1, 20)
 if NETWATCH_UP_MIN_SUCCESS_RATIO < 0.1 or NETWATCH_UP_MIN_SUCCESS_RATIO > 1.0:
     raise ValueError(
@@ -420,19 +604,37 @@ if NETWATCH_UP_MIN_SUCCESS_RATIO < 0.1 or NETWATCH_UP_MIN_SUCCESS_RATIO > 1.0:
     )
 _assert_range("DAILY_REPORT_HOUR", DAILY_REPORT_HOUR, 0, 23)
 _assert_range("TRAFFIC_THRESHOLD_MBPS", TRAFFIC_THRESHOLD_MBPS, 0, 1_000_000)
-_assert_range("TRAFFIC_LEAK_THRESHOLD_MBPS", TRAFFIC_LEAK_THRESHOLD_MBPS, 0, 1_000_000)
+_assert_range(
+    "TRAFFIC_LEAK_THRESHOLD_MBPS",
+    TRAFFIC_LEAK_THRESHOLD_MBPS,
+    0,
+    1_000_000)
 _assert_range("TOP_BW_ALERT_TOP_N", TOP_BW_ALERT_TOP_N, 1, 50)
 _assert_range("TOP_BW_ALERT_WARN_MBPS", TOP_BW_ALERT_WARN_MBPS, 1, 1_000_000)
 _assert_range("TOP_BW_ALERT_CRIT_MBPS", TOP_BW_ALERT_CRIT_MBPS, 1, 1_000_000)
-_assert_range("TOP_BW_ALERT_CONSECUTIVE_HITS", TOP_BW_ALERT_CONSECUTIVE_HITS, 1, 20)
+_assert_range("TOP_BW_ALERT_CONSECUTIVE_HITS",
+              TOP_BW_ALERT_CONSECUTIVE_HITS, 1, 20)
 _assert_range("TOP_BW_ALERT_RECOVERY_HITS", TOP_BW_ALERT_RECOVERY_HITS, 1, 20)
-_assert_range("TOP_BW_ALERT_COOLDOWN_SEC", TOP_BW_ALERT_COOLDOWN_SEC, 0, 86_400)
-_assert_range("TOP_BW_ALERT_MIN_TX_MBPS", TOP_BW_ALERT_MIN_TX_MBPS, 0, 1_000_000)
-_assert_range("TOP_BW_ALERT_MIN_RX_MBPS", TOP_BW_ALERT_MIN_RX_MBPS, 0, 1_000_000)
+_assert_range(
+    "TOP_BW_ALERT_COOLDOWN_SEC",
+    TOP_BW_ALERT_COOLDOWN_SEC,
+    0,
+    86_400)
+_assert_range(
+    "TOP_BW_ALERT_MIN_TX_MBPS",
+    TOP_BW_ALERT_MIN_TX_MBPS,
+    0,
+    1_000_000)
+_assert_range(
+    "TOP_BW_ALERT_MIN_RX_MBPS",
+    TOP_BW_ALERT_MIN_RX_MBPS,
+    0,
+    1_000_000)
 _assert_range("TOP_BW_ALERT_INTERVAL", TOP_BW_ALERT_INTERVAL, 5, 3600)
 _assert_range("RX_ANOMALY_WARN_PPS", RX_ANOMALY_WARN_PPS, 100, 10_000_000)
 _assert_range("RX_ANOMALY_CRIT_PPS", RX_ANOMALY_CRIT_PPS, 100, 10_000_000)
-_assert_range("RX_ANOMALY_CONSECUTIVE_HITS", RX_ANOMALY_CONSECUTIVE_HITS, 1, 20)
+_assert_range("RX_ANOMALY_CONSECUTIVE_HITS",
+              RX_ANOMALY_CONSECUTIVE_HITS, 1, 20)
 _assert_range("RX_ANOMALY_RECOVERY_HITS", RX_ANOMALY_RECOVERY_HITS, 1, 20)
 _assert_range("RX_ANOMALY_COOLDOWN_SEC", RX_ANOMALY_COOLDOWN_SEC, 0, 86_400)
 _assert_range("DHCP_POOL_SIZE", DHCP_POOL_SIZE, 1, 1_000_000)
@@ -447,10 +649,17 @@ _assert_range("TELEGRAM_CONNECT_TIMEOUT", TELEGRAM_CONNECT_TIMEOUT, 1, 120)
 _assert_range("TELEGRAM_READ_TIMEOUT", TELEGRAM_READ_TIMEOUT, 1, 300)
 _assert_range("TELEGRAM_WRITE_TIMEOUT", TELEGRAM_WRITE_TIMEOUT, 1, 300)
 _assert_range("TELEGRAM_POOL_TIMEOUT", TELEGRAM_POOL_TIMEOUT, 1, 120)
-_assert_range("TELEGRAM_GET_UPDATES_READ_TIMEOUT", TELEGRAM_GET_UPDATES_READ_TIMEOUT, 1, 300)
-_assert_range("TELEGRAM_CONNECTION_POOL_SIZE", TELEGRAM_CONNECTION_POOL_SIZE, 1, 512)
-_assert_range("TELEGRAM_NETWORK_LOG_WINDOW_SEC", TELEGRAM_NETWORK_LOG_WINDOW_SEC, 60, 86_400)
-_assert_range("TELEGRAM_NETWORK_LOG_COOLDOWN_SEC", TELEGRAM_NETWORK_LOG_COOLDOWN_SEC, 30, 86_400)
+_assert_range("TELEGRAM_GET_UPDATES_READ_TIMEOUT",
+              TELEGRAM_GET_UPDATES_READ_TIMEOUT, 1, 300)
+_assert_range("TELEGRAM_CONNECTION_POOL_SIZE",
+              TELEGRAM_CONNECTION_POOL_SIZE, 1, 512)
+_assert_range(
+    "TELEGRAM_NETWORK_LOG_WINDOW_SEC",
+    TELEGRAM_NETWORK_LOG_WINDOW_SEC,
+    60,
+    86_400)
+_assert_range("TELEGRAM_NETWORK_LOG_COOLDOWN_SEC",
+              TELEGRAM_NETWORK_LOG_COOLDOWN_SEC, 30, 86_400)
 _assert_range("LOG_MAX_SIZE", LOG_MAX_SIZE, 1024, 1024 * 1024 * 1024)
 _assert_range("LOG_BACKUP_COUNT", LOG_BACKUP_COUNT, 1, 100)
 
@@ -458,47 +667,78 @@ _assert_range("LOG_BACKUP_COUNT", LOG_BACKUP_COUNT, 1, 100)
 # ============ VALIDASI ============
 
 _missing = []
-if not TOKEN: _missing.append("TOKEN")
-if not ADMIN_IDS: _missing.append("CHAT_ID atau ADMIN_IDS")
-if not MIKROTIK_IP: _missing.append("MIKROTIK_IP")
-if not MIKROTIK_USER: _missing.append("MIKROTIK_USER")
-if not MIKROTIK_PASS: _missing.append("MIKROTIK_PASS")
+if not TOKEN:
+    _missing.append("TOKEN")
+if not ADMIN_IDS:
+    _missing.append("CHAT_ID atau ADMIN_IDS")
+if not MIKROTIK_IP:
+    _missing.append("MIKROTIK_IP")
+if not MIKROTIK_USER:
+    _missing.append("MIKROTIK_USER")
+if not MIKROTIK_PASS:
+    _missing.append("MIKROTIK_PASS")
 
 if _missing:
-    raise ValueError(f"Config tidak lengkap! Variabel kosong: {', '.join(_missing)}. Cek file .env")
+    raise ValueError(
+        f"Config tidak lengkap! Variabel kosong: {
+            ', '.join(_missing)}. Cek file .env")
 
 
 # ============ RUNTIME CONFIG OVERRIDE ============
 # Load runtime config overrides (dari /config command bot)
 
-import time as _time
-import json as _json
 
 _RUNTIME_CONFIG_FILE = DATA_DIR / "runtime_config.json"
 _OVERRIDABLE_KEYS = {
-    'CPU_THRESHOLD', 'RAM_THRESHOLD', 'DISK_THRESHOLD',
-    'MONITOR_INTERVAL', 'RESOURCE_MONITOR_INTERVAL', 'NETWATCH_INTERVAL', 'MONITOR_LOG_INTERVAL', 'MONITOR_LOG_FETCH_LINES',
-    'NETWATCH_PING_CONCURRENCY', 'API_ACCOUNT_DEDUP_WINDOW_SEC', 'NETWATCH_IGNORE_HOSTS',
+    'CPU_THRESHOLD',
+    'RAM_THRESHOLD',
+    'DISK_THRESHOLD',
+    'MONITOR_INTERVAL',
+    'RESOURCE_MONITOR_INTERVAL',
+    'NETWATCH_INTERVAL',
+    'MONITOR_LOG_INTERVAL',
+    'MONITOR_LOG_FETCH_LINES',
+    'NETWATCH_PING_CONCURRENCY',
+    'API_ACCOUNT_DEDUP_WINDOW_SEC',
+    'NETWATCH_IGNORE_HOSTS',
     'NETWATCH_FAIL_THRESHOLD_OVERRIDES',
     'PING_COUNT',
-    'PING_FAIL_THRESHOLD', 'RECOVERY_CONFIRM_COUNT', 'RECOVERY_MIN_UP_SECONDS',
-    'NETWATCH_CYCLE_TIMEOUT_THRESHOLD', 'NETWATCH_DEGRADED_ALERT_COOLDOWN_SEC',
-    'CRITICAL_RECOVERY_CONFIRM_COUNT', 'CRITICAL_RECOVERY_MIN_UP_SECONDS',
+    'PING_FAIL_THRESHOLD',
+    'RECOVERY_CONFIRM_COUNT',
+    'RECOVERY_MIN_UP_SECONDS',
+    'NETWATCH_CYCLE_TIMEOUT_THRESHOLD',
+    'NETWATCH_DEGRADED_ALERT_COOLDOWN_SEC',
+    'CRITICAL_RECOVERY_CONFIRM_COUNT',
+    'CRITICAL_RECOVERY_MIN_UP_SECONDS',
     'NETWATCH_UP_MIN_SUCCESS_RATIO',
     'RATE_LIMIT_PER_MINUTE',
-    'DHCP_ALERT_THRESHOLD', 'TRAFFIC_THRESHOLD_MBPS',
+    'DHCP_ALERT_THRESHOLD',
+    'TRAFFIC_THRESHOLD_MBPS',
     'MONITOR_VPN_ENABLED',
     'TOP_BW_ALERT_ENABLED',
-    'TOP_BW_ALERT_TOP_N', 'TOP_BW_ALERT_WARN_MBPS', 'TOP_BW_ALERT_CRIT_MBPS',
-    'TOP_BW_ALERT_CONSECUTIVE_HITS', 'TOP_BW_ALERT_RECOVERY_HITS',
-    'TOP_BW_ALERT_COOLDOWN_SEC', 'TOP_BW_ALERT_MIN_TX_MBPS', 'TOP_BW_ALERT_MIN_RX_MBPS',
-    'TOP_BW_ALERT_INTERVAL', 'TOP_BW_ALERT_IGNORE_QUEUES',
-    'RX_ANOMALY_ENABLED', 'RX_ANOMALY_WARN_PPS', 'RX_ANOMALY_CRIT_PPS',
-    'RX_ANOMALY_CONSECUTIVE_HITS', 'RX_ANOMALY_RECOVERY_HITS',
-    'RX_ANOMALY_COOLDOWN_SEC', 'RX_ANOMALY_WATCH_IFACE',
-    'DAILY_REPORT_HOUR', 'ALERT_ESCALATION_MINUTES',
-    'ALERT_DIGEST_THRESHOLD', 'ALERT_DIGEST_WINDOW',
-    'TRAFFIC_LEAK_THRESHOLD_MBPS', 'ALERT_REQUIRE_START',
+    'TOP_BW_ALERT_TOP_N',
+    'TOP_BW_ALERT_WARN_MBPS',
+    'TOP_BW_ALERT_CRIT_MBPS',
+    'TOP_BW_ALERT_CONSECUTIVE_HITS',
+    'TOP_BW_ALERT_RECOVERY_HITS',
+    'TOP_BW_ALERT_COOLDOWN_SEC',
+    'TOP_BW_ALERT_MIN_TX_MBPS',
+    'TOP_BW_ALERT_MIN_RX_MBPS',
+    'TOP_BW_ALERT_INTERVAL',
+    'TOP_BW_ALERT_IGNORE_QUEUES',
+    'RX_ANOMALY_ENABLED',
+    'RX_ANOMALY_WARN_PPS',
+    'RX_ANOMALY_CRIT_PPS',
+    'RX_ANOMALY_CONSECUTIVE_HITS',
+    'RX_ANOMALY_RECOVERY_HITS',
+    'RX_ANOMALY_COOLDOWN_SEC',
+    'RX_ANOMALY_WATCH_IFACE',
+    'DAILY_REPORT_HOUR',
+    'ALERT_ESCALATION_MINUTES',
+    'ALERT_DIGEST_THRESHOLD',
+    'ALERT_DIGEST_WINDOW',
+    'TRAFFIC_LEAK_THRESHOLD_MBPS',
+    'ALERT_REQUIRE_START',
     'MIKROTIK_RESET_ALL_COOLDOWN_SEC',
 }
 
@@ -555,7 +795,8 @@ _OVERRIDABLE_SCHEMA = {
     'MIKROTIK_RESET_ALL_COOLDOWN_SEC': (int, 5, 3600),
 }
 
-# Snapshot default dari env agar reset via file (hapus key) bisa kembali ke nilai asli.
+# Snapshot default dari env agar reset via file (hapus key) bisa kembali
+# ke nilai asli.
 _DEFAULT_OVERRIDABLES = {k: globals().get(k) for k in _OVERRIDABLE_KEYS}
 _last_runtime_reload_ts = 0.0
 _last_runtime_mtime = None
@@ -634,7 +875,8 @@ def reload_runtime_overrides(force=False, min_interval=5):
             except ValueError:
                 continue
         elif key in {'TOP_BW_ALERT_IGNORE_QUEUES', 'NETWATCH_IGNORE_HOSTS', 'RX_ANOMALY_WATCH_IFACE'}:
-            cast_val = [x.strip() for x in str(value or "").split(",") if x.strip()]
+            cast_val = [x.strip()
+                        for x in str(value or "").split(",") if x.strip()]
         elif key == 'NETWATCH_FAIL_THRESHOLD_OVERRIDES':
             cast_val = _parse_host_int_map(value)
         else:
@@ -681,7 +923,7 @@ def reload_router_env(force=False, min_interval=5):
     global TOP_BW_ALERT_ENABLED, TOP_BW_ALERT_TOP_N, TOP_BW_ALERT_WARN_MBPS, TOP_BW_ALERT_CRIT_MBPS
     global TOP_BW_ALERT_CONSECUTIVE_HITS, TOP_BW_ALERT_RECOVERY_HITS, TOP_BW_ALERT_COOLDOWN_SEC
     global TOP_BW_ALERT_MIN_TX_MBPS, TOP_BW_ALERT_MIN_RX_MBPS, TOP_BW_ALERT_INTERVAL, TOP_BW_ALERT_IGNORE_QUEUES
-    global NETWATCH_INTERVAL, RESOURCE_MONITOR_INTERVAL, MONITOR_LOG_FETCH_LINES, NETWATCH_PING_CONCURRENCY, API_ACCOUNT_DEDUP_WINDOW_SEC
+    global NETWATCH_INTERVAL, RESOURCE_MONITOR_INTERVAL, MONITOR_LOG_FETCH_LINES, NETWATCH_PING_CONCURRENCY, API_ACCOUNT_DEDUP_WINDOW_SEC, NETWATCH_IGNORE_HOSTS, NETWATCH_FAIL_THRESHOLD_OVERRIDES
     global RECOVERY_MIN_UP_SECONDS, NETWATCH_UP_MIN_SUCCESS_RATIO
     global NETWATCH_CYCLE_TIMEOUT_THRESHOLD, NETWATCH_DEGRADED_ALERT_COOLDOWN_SEC
     global CRITICAL_RECOVERY_CONFIRM_COUNT, CRITICAL_RECOVERY_MIN_UP_SECONDS
@@ -742,12 +984,15 @@ def reload_router_env(force=False, min_interval=5):
     _chat_id_raw_val = str(values.get("CHAT_ID", "") or "").strip()
     try:
         if _admin_ids_raw_val:
-            parsed_admin_ids = [int(x.strip()) for x in _admin_ids_raw_val.split(",") if x.strip()]
+            parsed_admin_ids = [int(x.strip())
+                                for x in _admin_ids_raw_val.split(",") if x.strip()]
         elif _chat_id_raw_val:
             parsed_admin_ids = [int(_chat_id_raw_val)]
         else:
             parsed_admin_ids = list(ADMIN_IDS)
-        parsed_admin_ids = [aid for aid in parsed_admin_ids if isinstance(aid, int) and aid > 0]
+        parsed_admin_ids = [
+            aid for aid in parsed_admin_ids if isinstance(
+                aid, int) and aid > 0]
         if parsed_admin_ids:
             ADMIN_IDS = parsed_admin_ids
             CHAT_ID = ADMIN_IDS[0]
@@ -758,18 +1003,37 @@ def reload_router_env(force=False, min_interval=5):
     MIKROTIK_IP = str(values.get("MIKROTIK_IP", MIKROTIK_IP)).strip()
     MIKROTIK_USER = str(values.get("MIKROTIK_USER", MIKROTIK_USER)).strip()
     MIKROTIK_PASS = str(values.get("MIKROTIK_PASS", MIKROTIK_PASS)).strip()
-    MIKROTIK_PORT = _parse_int_range(values.get("MIKROTIK_PORT"), MIKROTIK_PORT, 1, 65535)
-    MIKROTIK_USE_SSL = _parse_bool(values.get("MIKROTIK_USE_SSL"), MIKROTIK_USE_SSL)
-    MIKROTIK_TLS_VERIFY = _parse_bool(values.get("MIKROTIK_TLS_VERIFY"), MIKROTIK_TLS_VERIFY)
-    MIKROTIK_TLS_CA_FILE = str(values.get("MIKROTIK_TLS_CA_FILE", MIKROTIK_TLS_CA_FILE)).strip()
-    MIKROTIK_FTP_TLS = _parse_bool(values.get("MIKROTIK_FTP_TLS"), MIKROTIK_FTP_TLS)
-    MIKROTIK_FTP_ALLOW_INSECURE = _parse_bool(values.get("MIKROTIK_FTP_ALLOW_INSECURE"), MIKROTIK_FTP_ALLOW_INSECURE)
-    MIKROTIK_FTP_PORT = _parse_int_range(values.get("MIKROTIK_FTP_PORT"), MIKROTIK_FTP_PORT, 1, 65535)
+    MIKROTIK_PORT = _parse_int_range(
+        values.get("MIKROTIK_PORT"), MIKROTIK_PORT, 1, 65535)
+    MIKROTIK_USE_SSL = _parse_bool(
+        values.get("MIKROTIK_USE_SSL"),
+        MIKROTIK_USE_SSL)
+    MIKROTIK_TLS_VERIFY = _parse_bool(
+        values.get("MIKROTIK_TLS_VERIFY"),
+        MIKROTIK_TLS_VERIFY)
+    MIKROTIK_TLS_CA_FILE = str(
+        values.get(
+            "MIKROTIK_TLS_CA_FILE",
+            MIKROTIK_TLS_CA_FILE)).strip()
+    MIKROTIK_FTP_TLS = _parse_bool(
+        values.get("MIKROTIK_FTP_TLS"),
+        MIKROTIK_FTP_TLS)
+    MIKROTIK_FTP_ALLOW_INSECURE = _parse_bool(
+        values.get("MIKROTIK_FTP_ALLOW_INSECURE"),
+        MIKROTIK_FTP_ALLOW_INSECURE)
+    MIKROTIK_FTP_PORT = _parse_int_range(
+        values.get("MIKROTIK_FTP_PORT"), MIKROTIK_FTP_PORT, 1, 65535)
     BOT_IP = str(values.get("BOT_IP", BOT_IP)).strip()
-    INSTITUTION_NAME = str(values.get("INSTITUTION_NAME", INSTITUTION_NAME)).strip() or INSTITUTION_NAME
+    INSTITUTION_NAME = str(
+        values.get(
+            "INSTITUTION_NAME",
+            INSTITUTION_NAME)).strip() or INSTITUTION_NAME
 
     # Reload device identity mapping
-    _mikrotik_devices_raw_val = str(values.get("MIKROTIK_DEVICES", "") or "").strip()
+    _mikrotik_devices_raw_val = str(
+        values.get(
+            "MIKROTIK_DEVICES",
+            "") or "").strip()
     if _mikrotik_devices_raw_val:
         parsed_devices = {}
         for _dev_entry in _mikrotik_devices_raw_val.split(","):
@@ -784,29 +1048,25 @@ def reload_router_env(force=False, min_interval=5):
         MIKROTIK_DEVICES = parsed_devices
 
     MIKROTIK_MAX_CONNECTIONS = _parse_int_range(
-        values.get("MIKROTIK_MAX_CONNECTIONS"), MIKROTIK_MAX_CONNECTIONS, 1, 256
-    )
-    MIKROTIK_RECONNECT_BASE_BACKOFF = _parse_int_range(
-        values.get("MIKROTIK_RECONNECT_BASE_BACKOFF"), MIKROTIK_RECONNECT_BASE_BACKOFF, 1, 300
-    )
-    MIKROTIK_RECONNECT_MAX_BACKOFF = _parse_int_range(
-        values.get("MIKROTIK_RECONNECT_MAX_BACKOFF"), MIKROTIK_RECONNECT_MAX_BACKOFF, 1, 3600
-    )
-    MIKROTIK_RESET_ALL_COOLDOWN_SEC = _parse_int_range(
-        values.get("MIKROTIK_RESET_ALL_COOLDOWN_SEC"), MIKROTIK_RESET_ALL_COOLDOWN_SEC, 5, 3600
-    )
+        values.get("MIKROTIK_MAX_CONNECTIONS"), MIKROTIK_MAX_CONNECTIONS, 1, 256)
+    MIKROTIK_RECONNECT_BASE_BACKOFF = _parse_int_range(values.get(
+        "MIKROTIK_RECONNECT_BASE_BACKOFF"), MIKROTIK_RECONNECT_BASE_BACKOFF, 1, 300)
+    MIKROTIK_RECONNECT_MAX_BACKOFF = _parse_int_range(values.get(
+        "MIKROTIK_RECONNECT_MAX_BACKOFF"), MIKROTIK_RECONNECT_MAX_BACKOFF, 1, 3600)
+    MIKROTIK_RESET_ALL_COOLDOWN_SEC = _parse_int_range(values.get(
+        "MIKROTIK_RESET_ALL_COOLDOWN_SEC"), MIKROTIK_RESET_ALL_COOLDOWN_SEC, 5, 3600)
     ASYNC_THREAD_WORKERS = _parse_int_range(
         values.get("ASYNC_THREAD_WORKERS"), ASYNC_THREAD_WORKERS, 2, 128
     )
     MIKROTIK_CONNECTION_MAX_AGE_SEC = _parse_int_range(
-        values.get("MIKROTIK_CONNECTION_MAX_AGE_SEC"), MIKROTIK_CONNECTION_MAX_AGE_SEC, 0, 86_400
-    )
-    RESOURCE_MONITOR_INTERVAL = _parse_int_range(
-        values.get("RESOURCE_MONITOR_INTERVAL"), RESOURCE_MONITOR_INTERVAL, 10, 86_400
-    )
+        values.get("MIKROTIK_CONNECTION_MAX_AGE_SEC"),
+        MIKROTIK_CONNECTION_MAX_AGE_SEC,
+        0,
+        86_400)
+    RESOURCE_MONITOR_INTERVAL = _parse_int_range(values.get(
+        "RESOURCE_MONITOR_INTERVAL"), RESOURCE_MONITOR_INTERVAL, 10, 86_400)
     TELEGRAM_CONNECT_TIMEOUT = _parse_float_range(
-        values.get("TELEGRAM_CONNECT_TIMEOUT"), TELEGRAM_CONNECT_TIMEOUT, 1, 120
-    )
+        values.get("TELEGRAM_CONNECT_TIMEOUT"), TELEGRAM_CONNECT_TIMEOUT, 1, 120)
     TELEGRAM_READ_TIMEOUT = _parse_float_range(
         values.get("TELEGRAM_READ_TIMEOUT"), TELEGRAM_READ_TIMEOUT, 1, 300
     )
@@ -816,44 +1076,72 @@ def reload_router_env(force=False, min_interval=5):
     TELEGRAM_POOL_TIMEOUT = _parse_float_range(
         values.get("TELEGRAM_POOL_TIMEOUT"), TELEGRAM_POOL_TIMEOUT, 1, 120
     )
-    TELEGRAM_GET_UPDATES_READ_TIMEOUT = _parse_float_range(
-        values.get("TELEGRAM_GET_UPDATES_READ_TIMEOUT"), TELEGRAM_GET_UPDATES_READ_TIMEOUT, 1, 300
-    )
-    TELEGRAM_CONNECTION_POOL_SIZE = _parse_int_range(
-        values.get("TELEGRAM_CONNECTION_POOL_SIZE"), TELEGRAM_CONNECTION_POOL_SIZE, 1, 512
-    )
+    TELEGRAM_GET_UPDATES_READ_TIMEOUT = _parse_float_range(values.get(
+        "TELEGRAM_GET_UPDATES_READ_TIMEOUT"), TELEGRAM_GET_UPDATES_READ_TIMEOUT, 1, 300)
+    TELEGRAM_CONNECTION_POOL_SIZE = _parse_int_range(values.get(
+        "TELEGRAM_CONNECTION_POOL_SIZE"), TELEGRAM_CONNECTION_POOL_SIZE, 1, 512)
     TELEGRAM_NETWORK_LOG_WINDOW_SEC = _parse_int_range(
-        values.get("TELEGRAM_NETWORK_LOG_WINDOW_SEC"), TELEGRAM_NETWORK_LOG_WINDOW_SEC, 60, 86_400
-    )
+        values.get("TELEGRAM_NETWORK_LOG_WINDOW_SEC"),
+        TELEGRAM_NETWORK_LOG_WINDOW_SEC,
+        60,
+        86_400)
     TELEGRAM_NETWORK_LOG_COOLDOWN_SEC = _parse_int_range(
-        values.get("TELEGRAM_NETWORK_LOG_COOLDOWN_SEC"), TELEGRAM_NETWORK_LOG_COOLDOWN_SEC, 30, 86_400
-    )
-    _api_skip_users_raw_val = str(values.get("API_ACCOUNT_SKIP_USERS", "") or "").strip()
-    API_ACCOUNT_SKIP_USERS = [x.strip().lower() for x in _api_skip_users_raw_val.split(",") if x.strip()]
+        values.get("TELEGRAM_NETWORK_LOG_COOLDOWN_SEC"),
+        TELEGRAM_NETWORK_LOG_COOLDOWN_SEC,
+        30,
+        86_400)
+    _api_skip_users_raw_val = str(
+        values.get(
+            "API_ACCOUNT_SKIP_USERS",
+            "") or "").strip()
+    API_ACCOUNT_SKIP_USERS = [
+        x.strip().lower() for x in _api_skip_users_raw_val.split(",") if x.strip()]
     API_ACCOUNT_DEDUP_WINDOW_SEC = _parse_int_range(
-        values.get("API_ACCOUNT_DEDUP_WINDOW_SEC"), API_ACCOUNT_DEDUP_WINDOW_SEC, 30, 86_400
-    )
-    _auto_block_trusted_raw_val = str(values.get("AUTO_BLOCK_TRUSTED_IPS", "") or "").strip()
-    AUTO_BLOCK_TRUSTED_IPS = [x.strip() for x in _auto_block_trusted_raw_val.split(",") if x.strip()]
+        values.get("API_ACCOUNT_DEDUP_WINDOW_SEC"),
+        API_ACCOUNT_DEDUP_WINDOW_SEC,
+        30,
+        86_400)
+    _auto_block_trusted_raw_val = str(
+        values.get(
+            "AUTO_BLOCK_TRUSTED_IPS",
+            "") or "").strip()
+    AUTO_BLOCK_TRUSTED_IPS = [
+        x.strip() for x in _auto_block_trusted_raw_val.split(",") if x.strip()]
     _dns_domains_raw = str(values.get("DNS_CHECK_DOMAIN", "") or "").strip()
-    DNS_CHECK_DOMAINS = [x.strip() for x in _dns_domains_raw.split(",") if x.strip()] or DNS_CHECK_DOMAINS
+    DNS_CHECK_DOMAINS = [x.strip() for x in _dns_domains_raw.split(
+        ",") if x.strip()] or DNS_CHECK_DOMAINS
     DNS_CHECK_DOMAIN = DNS_CHECK_DOMAINS[0] if DNS_CHECK_DOMAINS else DNS_CHECK_DOMAIN
-    _ignore_iface_raw_val = str(values.get("MONITOR_IGNORE_IFACE", "") or "").strip()
-    MONITOR_IGNORE_IFACE = set(x.strip() for x in _ignore_iface_raw_val.split(",") if x.strip())
-    MONITOR_VPN_ENABLED = _parse_bool(values.get("MONITOR_VPN_ENABLED"), MONITOR_VPN_ENABLED)
-    _vpn_ignore_raw_val = str(values.get("MONITOR_VPN_IGNORE_NAMES", "") or "").strip()
-    MONITOR_VPN_IGNORE_NAMES = set(x.strip().lower() for x in _vpn_ignore_raw_val.split(",") if x.strip())
-    _netwatch_ignore_hosts_raw_val = str(values.get("NETWATCH_IGNORE_HOSTS", "") or "").strip()
-    NETWATCH_IGNORE_HOSTS = [x.strip() for x in _netwatch_ignore_hosts_raw_val.split(",") if x.strip()]
-    _netwatch_fail_threshold_overrides_raw_val = str(values.get("NETWATCH_FAIL_THRESHOLD_OVERRIDES", "") or "").strip()
-    NETWATCH_FAIL_THRESHOLD_OVERRIDES = _parse_host_int_map(_netwatch_fail_threshold_overrides_raw_val)
-    NETWATCH_INTERVAL = _parse_int_range(values.get("NETWATCH_INTERVAL"), NETWATCH_INTERVAL, 5, 3600)
+    _ignore_iface_raw_val = str(
+        values.get(
+            "MONITOR_IGNORE_IFACE",
+            "") or "").strip()
+    MONITOR_IGNORE_IFACE = set(
+        x.strip() for x in _ignore_iface_raw_val.split(",") if x.strip())
+    MONITOR_VPN_ENABLED = _parse_bool(
+        values.get("MONITOR_VPN_ENABLED"),
+        MONITOR_VPN_ENABLED)
+    _vpn_ignore_raw_val = str(
+        values.get(
+            "MONITOR_VPN_IGNORE_NAMES",
+            "") or "").strip()
+    MONITOR_VPN_IGNORE_NAMES = set(
+        x.strip().lower() for x in _vpn_ignore_raw_val.split(",") if x.strip())
+    _netwatch_ignore_hosts_raw_val = str(
+        values.get(
+            "NETWATCH_IGNORE_HOSTS",
+            "") or "").strip()
+    NETWATCH_IGNORE_HOSTS = [
+        x.strip() for x in _netwatch_ignore_hosts_raw_val.split(",") if x.strip()]
+    _netwatch_fail_threshold_overrides_raw_val = str(
+        values.get("NETWATCH_FAIL_THRESHOLD_OVERRIDES", "") or "").strip()
+    NETWATCH_FAIL_THRESHOLD_OVERRIDES = _parse_host_int_map(
+        _netwatch_fail_threshold_overrides_raw_val)
+    NETWATCH_INTERVAL = _parse_int_range(
+        values.get("NETWATCH_INTERVAL"), NETWATCH_INTERVAL, 5, 3600)
     MONITOR_LOG_FETCH_LINES = _parse_int_range(
-        values.get("MONITOR_LOG_FETCH_LINES"), MONITOR_LOG_FETCH_LINES, 20, 1000
-    )
+        values.get("MONITOR_LOG_FETCH_LINES"), MONITOR_LOG_FETCH_LINES, 20, 1000)
     NETWATCH_PING_CONCURRENCY = _parse_int_range(
-        values.get("NETWATCH_PING_CONCURRENCY"), NETWATCH_PING_CONCURRENCY, 1, 32
-    )
+        values.get("NETWATCH_PING_CONCURRENCY"), NETWATCH_PING_CONCURRENCY, 1, 32)
     GW_WAN = str(values.get("GW_WAN", GW_WAN)).strip() or GW_WAN
     GW_INET = str(values.get("GW_INET", GW_INET)).strip() or GW_INET
 
@@ -873,7 +1161,10 @@ def reload_router_env(force=False, min_interval=5):
             parsed_aps[name.strip()] = ip.strip()
     APS_FALLBACK = parsed_aps
 
-    _critical_devices_raw_val = str(values.get("CRITICAL_DEVICES", "") or "").strip()
+    _critical_devices_raw_val = str(
+        values.get(
+            "CRITICAL_DEVICES",
+            "") or "").strip()
     parsed_critical_devices = {}
     for s in _critical_devices_raw_val.split(","):
         if ":" in s:
@@ -881,61 +1172,87 @@ def reload_router_env(force=False, min_interval=5):
             parsed_critical_devices[name.strip()] = ip.strip()
     CRITICAL_DEVICES_FALLBACK = parsed_critical_devices
 
-    _critical_names_raw_val = str(values.get("CRITICAL_DEVICE_NAMES", "") or "").strip()
-    CRITICAL_DEVICE_NAMES = [x.strip() for x in _critical_names_raw_val.split(",") if x.strip()]
-    _critical_windows_raw_val = str(values.get("CRITICAL_DEVICE_WINDOWS", "") or "").strip()
-    CRITICAL_DEVICE_WINDOWS = _parse_critical_device_windows(_critical_windows_raw_val)
+    _critical_names_raw_val = str(
+        values.get(
+            "CRITICAL_DEVICE_NAMES",
+            "") or "").strip()
+    CRITICAL_DEVICE_NAMES = [
+        x.strip() for x in _critical_names_raw_val.split(",") if x.strip()]
+    _critical_windows_raw_val = str(
+        values.get(
+            "CRITICAL_DEVICE_WINDOWS",
+            "") or "").strip()
+    CRITICAL_DEVICE_WINDOWS = _parse_critical_device_windows(
+        _critical_windows_raw_val)
 
-    DHCP_POOL_SIZE = _parse_int_range(values.get("DHCP_POOL_SIZE"), DHCP_POOL_SIZE, 1, 1_000_000)
-    ALERT_REQUIRE_START = _parse_bool(values.get("ALERT_REQUIRE_START"), ALERT_REQUIRE_START)
-    TOP_BW_ALERT_ENABLED = _parse_bool(values.get("TOP_BW_ALERT_ENABLED"), TOP_BW_ALERT_ENABLED)
-    TOP_BW_ALERT_TOP_N = _parse_int_range(values.get("TOP_BW_ALERT_TOP_N"), TOP_BW_ALERT_TOP_N, 1, 50)
-    TOP_BW_ALERT_WARN_MBPS = _parse_int_range(values.get("TOP_BW_ALERT_WARN_MBPS"), TOP_BW_ALERT_WARN_MBPS, 1, 1_000_000)
-    TOP_BW_ALERT_CRIT_MBPS = _parse_int_range(values.get("TOP_BW_ALERT_CRIT_MBPS"), TOP_BW_ALERT_CRIT_MBPS, 1, 1_000_000)
-    TOP_BW_ALERT_CONSECUTIVE_HITS = _parse_int_range(
-        values.get("TOP_BW_ALERT_CONSECUTIVE_HITS"), TOP_BW_ALERT_CONSECUTIVE_HITS, 1, 20
-    )
+    DHCP_POOL_SIZE = _parse_int_range(
+        values.get("DHCP_POOL_SIZE"), DHCP_POOL_SIZE, 1, 1_000_000)
+    ALERT_REQUIRE_START = _parse_bool(
+        values.get("ALERT_REQUIRE_START"),
+        ALERT_REQUIRE_START)
+    TOP_BW_ALERT_ENABLED = _parse_bool(
+        values.get("TOP_BW_ALERT_ENABLED"),
+        TOP_BW_ALERT_ENABLED)
+    TOP_BW_ALERT_TOP_N = _parse_int_range(
+        values.get("TOP_BW_ALERT_TOP_N"), TOP_BW_ALERT_TOP_N, 1, 50)
+    TOP_BW_ALERT_WARN_MBPS = _parse_int_range(
+        values.get("TOP_BW_ALERT_WARN_MBPS"),
+        TOP_BW_ALERT_WARN_MBPS,
+        1,
+        1_000_000)
+    TOP_BW_ALERT_CRIT_MBPS = _parse_int_range(
+        values.get("TOP_BW_ALERT_CRIT_MBPS"),
+        TOP_BW_ALERT_CRIT_MBPS,
+        1,
+        1_000_000)
+    TOP_BW_ALERT_CONSECUTIVE_HITS = _parse_int_range(values.get(
+        "TOP_BW_ALERT_CONSECUTIVE_HITS"), TOP_BW_ALERT_CONSECUTIVE_HITS, 1, 20)
     TOP_BW_ALERT_RECOVERY_HITS = _parse_int_range(
-        values.get("TOP_BW_ALERT_RECOVERY_HITS"), TOP_BW_ALERT_RECOVERY_HITS, 1, 20
-    )
+        values.get("TOP_BW_ALERT_RECOVERY_HITS"), TOP_BW_ALERT_RECOVERY_HITS, 1, 20)
     TOP_BW_ALERT_COOLDOWN_SEC = _parse_int_range(
-        values.get("TOP_BW_ALERT_COOLDOWN_SEC"), TOP_BW_ALERT_COOLDOWN_SEC, 0, 86_400
-    )
+        values.get("TOP_BW_ALERT_COOLDOWN_SEC"), TOP_BW_ALERT_COOLDOWN_SEC, 0, 86_400)
     TOP_BW_ALERT_MIN_TX_MBPS = _parse_int_range(
-        values.get("TOP_BW_ALERT_MIN_TX_MBPS"), TOP_BW_ALERT_MIN_TX_MBPS, 0, 1_000_000
-    )
+        values.get("TOP_BW_ALERT_MIN_TX_MBPS"),
+        TOP_BW_ALERT_MIN_TX_MBPS,
+        0,
+        1_000_000)
     TOP_BW_ALERT_MIN_RX_MBPS = _parse_int_range(
-        values.get("TOP_BW_ALERT_MIN_RX_MBPS"), TOP_BW_ALERT_MIN_RX_MBPS, 0, 1_000_000
-    )
+        values.get("TOP_BW_ALERT_MIN_RX_MBPS"),
+        TOP_BW_ALERT_MIN_RX_MBPS,
+        0,
+        1_000_000)
     TOP_BW_ALERT_INTERVAL = _parse_int_range(
         values.get("TOP_BW_ALERT_INTERVAL"), TOP_BW_ALERT_INTERVAL, 5, 3600
     )
-    _top_bw_ignore_queues_raw_val = str(values.get("TOP_BW_ALERT_IGNORE_QUEUES", "") or "").strip()
+    _top_bw_ignore_queues_raw_val = str(
+        values.get(
+            "TOP_BW_ALERT_IGNORE_QUEUES",
+            "") or "").strip()
     if _top_bw_ignore_queues_raw_val:
-        TOP_BW_ALERT_IGNORE_QUEUES = [x.strip() for x in _top_bw_ignore_queues_raw_val.split(",") if x.strip()]
+        TOP_BW_ALERT_IGNORE_QUEUES = [
+            x.strip() for x in _top_bw_ignore_queues_raw_val.split(",") if x.strip()]
     else:
         TOP_BW_ALERT_IGNORE_QUEUES = []
     RECOVERY_MIN_UP_SECONDS = _parse_int_range(
         values.get("RECOVERY_MIN_UP_SECONDS"), RECOVERY_MIN_UP_SECONDS, 0, 3600
     )
-    NETWATCH_CYCLE_TIMEOUT_THRESHOLD = _parse_int_range(
-        values.get("NETWATCH_CYCLE_TIMEOUT_THRESHOLD"), NETWATCH_CYCLE_TIMEOUT_THRESHOLD, 1, 20
-    )
+    NETWATCH_CYCLE_TIMEOUT_THRESHOLD = _parse_int_range(values.get(
+        "NETWATCH_CYCLE_TIMEOUT_THRESHOLD"), NETWATCH_CYCLE_TIMEOUT_THRESHOLD, 1, 20)
     NETWATCH_DEGRADED_ALERT_COOLDOWN_SEC = _parse_int_range(
         values.get("NETWATCH_DEGRADED_ALERT_COOLDOWN_SEC"),
         NETWATCH_DEGRADED_ALERT_COOLDOWN_SEC,
         30,
         86_400,
     )
-    CRITICAL_RECOVERY_CONFIRM_COUNT = _parse_int_range(
-        values.get("CRITICAL_RECOVERY_CONFIRM_COUNT"), CRITICAL_RECOVERY_CONFIRM_COUNT, 1, 20
-    )
+    CRITICAL_RECOVERY_CONFIRM_COUNT = _parse_int_range(values.get(
+        "CRITICAL_RECOVERY_CONFIRM_COUNT"), CRITICAL_RECOVERY_CONFIRM_COUNT, 1, 20)
     CRITICAL_RECOVERY_MIN_UP_SECONDS = _parse_int_range(
-        values.get("CRITICAL_RECOVERY_MIN_UP_SECONDS"), CRITICAL_RECOVERY_MIN_UP_SECONDS, 0, 3600
-    )
-    NETWATCH_UP_MIN_SUCCESS_RATIO = _parse_float_range(
-        values.get("NETWATCH_UP_MIN_SUCCESS_RATIO"), NETWATCH_UP_MIN_SUCCESS_RATIO, 0.1, 1.0
-    )
+        values.get("CRITICAL_RECOVERY_MIN_UP_SECONDS"),
+        CRITICAL_RECOVERY_MIN_UP_SECONDS,
+        0,
+        3600)
+    NETWATCH_UP_MIN_SUCCESS_RATIO = _parse_float_range(values.get(
+        "NETWATCH_UP_MIN_SUCCESS_RATIO"), NETWATCH_UP_MIN_SUCCESS_RATIO, 0.1, 1.0)
     if TOP_BW_ALERT_CRIT_MBPS < TOP_BW_ALERT_WARN_MBPS:
         TOP_BW_ALERT_CRIT_MBPS = TOP_BW_ALERT_WARN_MBPS
 

@@ -18,7 +18,8 @@ logger = logging.getLogger(__name__)
 async def cmd_mute_1h(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Callback khusus mute 1 jam dengan konfirmasi."""
     user = update.effective_user
-    if await _check_access(update, user, "/mute_1h"): return
+    if await _check_access(update, user, "/mute_1h"):
+        return
 
     pesan = "⚠️ <b>Konfirmasi Mute Alarm</b>\n\nAnda yakin ingin mematikan Notifikasi Alert selama <b>1 Jam</b> ke depan?"
     from telegram import InlineKeyboardButton, InlineKeyboardMarkup
@@ -35,7 +36,10 @@ async def cmd_mute_1h(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.effective_message.reply_text(pesan, parse_mode='HTML', reply_markup=reply_markup)
 
-async def callback_confirm_mute_1h(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+async def callback_confirm_mute_1h(
+        update: Update,
+        context: ContextTypes.DEFAULT_TYPE):
     """Eksekusi Mute 1 Jam setelah diconfirm."""
     context.args = ['60']
     await cmd_mute(update, context)
@@ -44,7 +48,8 @@ async def callback_confirm_mute_1h(update: Update, context: ContextTypes.DEFAULT
 async def cmd_mute(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Perintah /mute - Mencegah pesan Alert dari monitor selama interval tertentu."""
     user = update.effective_user
-    if await _check_access(update, user, "/mute"): return
+    if await _check_access(update, user, "/mute"):
+        return
 
     _MUTE_MAX_MINUTES = 1440  # FIND-11 FIX: batas maksimum 24 jam
     minutes = 60
@@ -67,9 +72,9 @@ async def cmd_mute(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f.write(str(expiry))
 
     await asyncio.to_thread(_write_lock)
-        
+
     pesan = f"🔇 <b>GLOBAL MUTE AKTIF</b>\n\nBot tidak akan mengirim Notifikasi Alert DOWN/UP maupun Anomaly DHCP selama <b>{minutes} menit</b> ke depan. Gunakan perintah ini saat sedang melakukan Maintenance Terencana.\n\nKetik /unmute untuk membatalkan."
-    
+
     catat(user.id, user.username, f"/mute {minutes}", "berhasil")
     if update.callback_query:
         await update.callback_query.answer("Mute diaktifkan")
@@ -84,16 +89,17 @@ async def cmd_mute(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def cmd_unmute(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Perintah /unmute - Membatalkan Status Mute."""
     user = update.effective_user
-    if await _check_access(update, user, "/unmute"): return
+    if await _check_access(update, user, "/unmute"):
+        return
 
     def _remove_lock():
         if _MUTE_FILE.exists():
             _MUTE_FILE.unlink(missing_ok=True)
 
     await asyncio.to_thread(_remove_lock)
-        
+
     pesan = "🔊 <b>GLOBAL MUTE DICABUT</b>\n\nNotifikasi Alert kembali normal."
-    
+
     catat(user.id, user.username, "/unmute", "berhasil")
     if update.callback_query:
         await update.callback_query.answer("Unmute berhasil")
@@ -107,12 +113,13 @@ async def cmd_unmute(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def cmd_ack(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Perintah /ack - Acknowledge alert CRITICAL yang pending.
-    
+
     Membaca pending_acks.json (cross-process IPC) yang ditulis oleh monitor process.
     Bot dan monitor berjalan sebagai proses PM2 berbeda — harus via file.
     """
     user = update.effective_user
-    if await _check_access(update, user, "/ack"): return
+    if await _check_access(update, user, "/ack"):
+        return
 
     # Answer callback query DULU agar Telegram tidak anggap timeout
     if update.callback_query:
@@ -163,7 +170,3 @@ async def cmd_ack(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.callback_query.message.reply_text(pesan, parse_mode='HTML', reply_markup=get_back_button())
     else:
         await update.message.reply_text(pesan, parse_mode='HTML', reply_markup=get_back_button())
-
-
-
-

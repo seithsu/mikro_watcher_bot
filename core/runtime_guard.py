@@ -31,4 +31,3 @@ def install_global_exception_hooks(process_name="app"):
     sys.excepthook = _sys_hook
     if hasattr(threading, "excepthook"):
         threading.excepthook = _thread_hook
-

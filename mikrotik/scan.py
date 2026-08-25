@@ -9,7 +9,7 @@ import ssl
 import librouteros
 
 from .connection import pool, _login_auto
-from ._arp_utils import _truthy, _is_active_arp_entry  # FIND-25 FIX: import dari canonical source
+from ._arp_utils import _is_active_arp_entry  # FIND-25 FIX: import dari canonical source
 import core.config as cfg
 
 logger = logging.getLogger(__name__)

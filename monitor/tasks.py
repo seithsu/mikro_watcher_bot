@@ -1,6 +1,9 @@
 # ============================================
 # MONITOR/TASKS - Monitor Tasks (System, Logs, DHCP/ARP)
 # ============================================
+# ============================================
+# MONITOR/TASKS - Monitor Tasks (System, Logs, DHCP/ARP)
+# ============================================
 
 import time
 import asyncio
@@ -8,13 +11,14 @@ import logging
 import re
 import socket
 import ipaddress
-import random
+import json
 from collections import deque
 from datetime import datetime
 from mikrotik.queue import format_rate_bps
 
 from telegram import InlineKeyboardMarkup, InlineKeyboardButton
 import core.config as cfg
+import core.alert_queue as alert_queue
 from mikrotik import (
     get_status, get_interfaces, get_traffic, get_mikrotik_log,
     get_dhcp_usage_count, get_dhcp_pool_capacity, get_arp_anomalies, get_active_arp_ip_set, block_ip, _pool
@@ -271,7 +275,6 @@ async def _get_router_logs_snapshot(fetch_lines, timeout=15, cache_ttl=180):
 
 
 # Single source of truth — canonical implementation in monitor.utils
-from .utils import compute_sleep_with_jitter as _compute_sleep_with_jitter
 from .utils import sleep_with_jitter as _sleep_with_jitter
 
 
@@ -409,7 +412,7 @@ def _is_dhcp_pool_exhausted_log(topics, message_text):
 
 def _get_autoblock_trusted_ips():
     """Set IP trusted yang tidak boleh pernah di-auto-block."""
-    trusted = {"127.0.0.1", "0.0.0.0"}
+    trusted = {"127.0.0.1", "0.0.0.0"}  # nosec B104
 
     # Sumber utama dari config.
     for raw in [cfg.BOT_IP, cfg.MIKROTIK_IP]:
@@ -795,7 +798,7 @@ def _extract_single_target_ip(queue_item):
     return str(net.network_address)
 
 
-def _normalize_top_bw_candidates(queue_list):
+async def _normalize_top_bw_candidates(queue_list):
     """Normalisasi queue list menjadi kandidat terurut untuk evaluasi top-N."""
     candidates = []
     active_arp_ips = None
@@ -816,7 +819,7 @@ def _normalize_top_bw_candidates(queue_list):
             # Query ARP aktif hanya saat queue benar-benar merepresentasikan satu host.
             if active_arp_ips is None:
                 try:
-                    active_arp_ips = set(get_active_arp_ip_set() or set())
+                    active_arp_ips = set(await asyncio.to_thread(get_active_arp_ip_set) or set())
                 except Exception as e:
                     logger.debug("Gagal mengambil active ARP IP set untuk top_bw: %s", e)
                     active_arp_ips = set()
@@ -866,7 +869,8 @@ async def _run_top_bw_alert_engine(queue_list):
     consecutive_hits = max(1, int(cfg.TOP_BW_ALERT_CONSECUTIVE_HITS))
     recovery_hits = max(1, int(cfg.TOP_BW_ALERT_RECOVERY_HITS))
     cooldown_sec = max(0, int(cfg.TOP_BW_ALERT_COOLDOWN_SEC))
-    candidates = _normalize_top_bw_candidates(queue_list)[:top_n]
+    normalized_queues = await _normalize_top_bw_candidates(queue_list)
+    candidates = normalized_queues[:top_n]
     seen_names = set()
 
     for c in candidates:
@@ -1129,12 +1133,12 @@ async def task_monitor_logs():
             }
             trusted_autoblock_ips = _get_autoblock_trusted_ips()
 
-            for l in logs:
-                uid = f"{l.get('time', '')}|{l.get('message', '')}"
+            for lease in logs:
+                uid = f"{lease.get('time', '')}|{lease.get('message', '')}"
                 if uid not in _seen_set:
-                    msg = l.get('message', '').lower()
-                    msg_text = l.get('message', '')
-                    topics = l.get('topics', '')
+                    msg = lease.get('message', '').lower()
+                    msg_text = lease.get('message', '')
+                    topics = lease.get('topics', '')
                     topic_tokens = {t.strip().lower() for t in str(topics).split(",") if t.strip()}
 
                     is_bot_ip = cfg.BOT_IP in msg_text if cfg.BOT_IP else False
@@ -1192,7 +1196,7 @@ async def task_monitor_logs():
 
                                         for admin_id in cfg.ADMIN_IDS:
                                             try:
-                                                await bot.send_message(chat_id=admin_id, text=pesan_block, parse_mode='HTML', reply_markup=btn)
+                                                await alert_queue.put_alert(chat_id=admin_id, text=pesan_block, parse_mode='HTML', reply_markup=btn)
                                             except Exception as send_err:
                                                 logger.warning(
                                                     "Gagal kirim notifikasi auto-block ke admin %s: %s",
@@ -1247,7 +1251,7 @@ async def task_monitor_logs():
                 for admin_id in cfg.ADMIN_IDS:
                     for pesan in chunks:
                         try:
-                            await bot.send_message(chat_id=admin_id, text=pesan, parse_mode='HTML')
+                            await alert_queue.put_alert(chat_id=admin_id, text=pesan, parse_mode='HTML')
                         except Exception as send_err:
                             logger.warning("Gagal forward log router ke admin %s: %s", admin_id, send_err)
                 logger.debug(f"Forwarded {len(new_logs)} log entries")
@@ -1447,7 +1451,7 @@ def _build_rx_anomaly_alert_message(iface_name, level, rx_pps, tx_pps, rx_bps, t
     if sources:
         msg += "👥 <b>Kemungkinan Sumber:</b>\n"
         for idx, s in enumerate(sources[:5], 1):
-            ip_info = f" ({s['ip']})" if s.get('ip') and s['ip'] != '0.0.0.0' else ""
+            ip_info = f" ({s['ip']})" if s.get('ip') and s['ip'] != '0.0.0.0' else ""  # nosec B104
             rx_mb = s.get('rx_fmt', 0)
             tx_mb = s.get('tx_fmt', 0)
             msg += f"  {idx}. <b>{s['name']}</b>{ip_info} — RX: {rx_mb:.1f} Mbps | TX: {tx_mb:.1f} Mbps\n"
@@ -1519,11 +1523,11 @@ async def _run_rx_anomaly_detection(active_ifaces, traffic_results, all_interfac
         all_interfaces: snapshot semua interface dari get_interfaces() untuk fallback
                         packet counter delta saat monitor-traffic timeout.
     """
-    global _rx_anomaly_state
     now = time.time()
     # Case-insensitive watch list agar match nama interface di router (misal LOCAL vs local)
-    watch_ifaces = {x.lower() for x in (getattr(cfg, 'RX_ANOMALY_WATCH_IFACE', ['local', 'eth3']) or ['local', 'eth3'])}
+    watch_ifaces = {x.lower() for x in (getattr(cfg, 'RX_ANOMALY_WATCH_IFACE', ['local', 'eth3', 'ether3']) or ['local', 'eth3', 'ether3'])}
     watch_ifaces.add('eth3')
+    watch_ifaces.add('ether3')
     consecutive_hits = max(1, int(cfg.RX_ANOMALY_CONSECUTIVE_HITS))
     recovery_hits = max(1, int(cfg.RX_ANOMALY_RECOVERY_HITS))
     cooldown_sec = max(0, int(cfg.RX_ANOMALY_COOLDOWN_SEC))
@@ -1614,7 +1618,7 @@ async def _run_rx_anomaly_detection(active_ifaces, traffic_results, all_interfac
                 buttons = []
                 for s in sources[:3]:
                     ip = s.get('ip')
-                    if ip and ip != '0.0.0.0':
+                    if ip and ip != '0.0.0.0':  # nosec B104
                         buttons.append([
                             InlineKeyboardButton(
                                 f"🚫 Block {s['name']} ({ip})",
@@ -1625,7 +1629,7 @@ async def _run_rx_anomaly_detection(active_ifaces, traffic_results, all_interfac
 
                 for admin_id in cfg.ADMIN_IDS:
                     try:
-                        await bot.send_message(
+                        await alert_queue.put_alert(
                             chat_id=admin_id,
                             text=f"🔴 [{now_timestamp()}] {msg}",
                             parse_mode='HTML',
@@ -1637,18 +1641,37 @@ async def _run_rx_anomaly_detection(active_ifaces, traffic_results, all_interfac
                 state["last_level"] = "critical"
                 state["last_alert_ts"] = now
                 
-                # Auto disable-enable eth3 jika rx anomaly terdeteksi tinggi
-                if iface_name.lower() == 'eth3':
+                if iface_name.lower() in ('eth3', 'ether3'):
                     async def _disable_enable_eth3(ifname):
                         try:
-                            from mikrotik.network import set_interface_status
-                            logger.warning("[RX_ANOMALY] Mematikan interface %s selama 5 detik karena anomali...", ifname)
-                            await asyncio.to_thread(set_interface_status, ifname, True)
+                            from mikrotik.network import set_interface_status, set_bridge_port_status
+                            logger.warning("[RX_ANOMALY] Mematikan akses %s selama 5 detik karena anomali...", ifname)
+                            success = await asyncio.to_thread(set_bridge_port_status, ifname, True)
+                            if not success:
+                                logger.warning("[RX_ANOMALY] Interface %s bukan port bridge, mematikan interface fisik...", ifname)
+                                await asyncio.to_thread(set_interface_status, ifname, True)
+                            
+                            for admin_id in cfg.ADMIN_IDS:
+                                try:
+                                    await alert_queue.put_alert(chat_id=admin_id, text=f"⚠️ <b>[AUTO-ACTION]</b> Mematikan (disable) sementara {ifname} karena anomali trafik tinggi.", parse_mode='HTML')
+                                except Exception:
+                                    pass
+
                             await asyncio.sleep(5)
-                            logger.warning("[RX_ANOMALY] Menghidupkan kembali interface %s...", ifname)
-                            await asyncio.to_thread(set_interface_status, ifname, False)
+                            
+                            logger.warning("[RX_ANOMALY] Menghidupkan kembali %s...", ifname)
+                            if success:
+                                await asyncio.to_thread(set_bridge_port_status, ifname, False)
+                            else:
+                                await asyncio.to_thread(set_interface_status, ifname, False)
+                                
+                            for admin_id in cfg.ADMIN_IDS:
+                                try:
+                                    await alert_queue.put_alert(chat_id=admin_id, text=f"✅ <b>[AUTO-ACTION]</b> Menghidupkan (enable) kembali {ifname}.", parse_mode='HTML')
+                                except Exception:
+                                    pass
                         except Exception as e:
-                            logger.error("[RX_ANOMALY] Gagal toggle interface %s: %s", ifname, e)
+                            logger.error("[RX_ANOMALY] Gagal toggle akses %s: %s", ifname, e)
                     asyncio.create_task(_disable_enable_eth3(iface_name))
             continue
 
@@ -1674,7 +1697,7 @@ async def _run_rx_anomaly_detection(active_ifaces, traffic_results, all_interfac
                 buttons = []
                 for s in sources[:3]:
                     ip = s.get('ip')
-                    if ip and ip != '0.0.0.0':
+                    if ip and ip != '0.0.0.0':  # nosec B104
                         buttons.append([
                             InlineKeyboardButton(
                                 f"🚫 Block {s['name']} ({ip})",
@@ -1685,7 +1708,7 @@ async def _run_rx_anomaly_detection(active_ifaces, traffic_results, all_interfac
 
                 for admin_id in cfg.ADMIN_IDS:
                     try:
-                        await bot.send_message(
+                        await alert_queue.put_alert(
                             chat_id=admin_id,
                             text=f"🟡 [{now_timestamp()}] {msg}",
                             parse_mode='HTML',
@@ -1752,17 +1775,21 @@ async def task_monitor_traffic():
 
     while True:
         try:
+            logger.info("[traffic] siklus dimulai - step 1: runtime check")
             apply_runtime_reset_if_signaled()
             cfg.reload_runtime_overrides(min_interval=10)
             cfg.reload_router_env(min_interval=10)
+            logger.info("[traffic] step 2: cek api health")
             if await _pause_if_api_unavailable("traffic", _TRAFFIC_INTERVAL):
                 continue
+            logger.info("[traffic] step 3: get interfaces")
             interfaces = await _get_interfaces_snapshot(
                 cache_ttl=max(_TRAFFIC_INTERVAL * 3, 180),
                 timeout=10,
                 log_key="tasks:traffic:get_interfaces",
             )
             if not interfaces:
+                logger.info("[traffic] interfaces kosong, sleep")
                 await _sleep_with_jitter(_TRAFFIC_INTERVAL)
                 continue
 
@@ -1771,9 +1798,11 @@ async def task_monitor_traffic():
                 if iface['name'] not in cfg.MONITOR_IGNORE_IFACE and iface['running']
             ]
             if not active_ifaces:
+                logger.info("[traffic] active_ifaces kosong, sleep")
                 await _sleep_with_jitter(_TRAFFIC_INTERVAL)
                 continue
 
+            logger.info("[traffic] step 4: collect traffic (%d ifaces)", len(active_ifaces))
             traffic_results = await _collect_interface_traffic(active_ifaces, "tasks:traffic:get_traffic")
 
             # Kumpulkan batch dan simpan sekali ke DB
@@ -1788,15 +1817,19 @@ async def task_monitor_traffic():
 
             if batch:
                 await asyncio.to_thread(database.record_metrics_batch, batch)
-                logger.debug(f"Traffic: {len(batch) // 2} interface(s) direkam ke DB")
+                logger.info(f"[traffic] step 5: {len(batch) // 2} interface(s) direkam ke DB")
 
             # RX Packet Anomaly Detection
             # Interface di RX watch list mungkin ada di MONITOR_IGNORE_IFACE
             # (user ingin skip traffic recording tapi tetap deteksi anomali).
             # Kumpulkan traffic interface tsb secara terpisah.
+            logger.info("[traffic] step 6: RX anomaly detection")
             if cfg.RX_ANOMALY_ENABLED:
+
                 try:
-                    rx_watch_set = {x.lower() for x in (getattr(cfg, 'RX_ANOMALY_WATCH_IFACE', ['local']) or ['local'])}
+                    rx_watch_set = {x.lower() for x in (getattr(cfg, 'RX_ANOMALY_WATCH_IFACE', ['local', 'ether3']) or ['local', 'ether3'])}
+                    rx_watch_set.add('eth3')
+                    rx_watch_set.add('ether3')
                     active_names_lower = {str(i.get('name', '')).strip().lower() for i in active_ifaces}
                     rx_extra_ifaces = [
                         iface for iface in interfaces

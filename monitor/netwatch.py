@@ -12,10 +12,9 @@ import os
 import socket
 import hashlib
 import math
-import random
 
 from mikrotik import (
-    get_status, get_interfaces, get_dhcp_usage_count, get_dhcp_pool_capacity,
+    get_status, get_dhcp_usage_count, get_dhcp_pool_capacity,
     get_monitored_aps, get_monitored_servers, get_monitored_critical_devices, get_default_gateway,
     ping_host
 )
@@ -30,7 +29,6 @@ from core import database
 from core.runtime_reset_signal import read_runtime_reset_signal
 
 # Single source of truth — canonical implementation in monitor.utils
-from .utils import compute_sleep_with_jitter as _compute_sleep_with_jitter
 from .utils import sleep_with_jitter as _sleep_with_jitter
 
 logger = logging.getLogger(__name__)
@@ -383,7 +381,7 @@ async def _persist_state_dump(state_dump):
 
         def _write_state():
             global _last_state_hash
-            new_hash = hashlib.md5(json.dumps(state_dump, sort_keys=True).encode()).hexdigest()
+            new_hash = hashlib.sha256(json.dumps(state_dump, sort_keys=True).encode()).hexdigest()
             if new_hash != _last_state_hash:
                 import tempfile
                 tmp_fd, tmp_path = tempfile.mkstemp(dir=str(config.DATA_DIR), suffix='.tmp')
@@ -474,7 +472,7 @@ def _build_snapshot_now():
         cpu = info.get('cpu', '?')
         total = int(info.get('ram_total', 0))
         free = int(info.get('ram_free', 0))
-        ram_free_mb = free / (1024*1024) if total > 0 else 0
+        ram_free_mb = free / (1024 * 1024) if total > 0 else 0
 
         try:
             dhcp_count = int(get_dhcp_usage_count() or 0)
@@ -582,11 +580,16 @@ async def task_monitor_netwatch():
                 current_gw_wan = config.GW_WAN
 
             all_icmp = [('Router', config.MIKROTIK_IP, 'CORE')]
-            if current_gw_wan: all_icmp.append(('WAN_GW', current_gw_wan, 'WAN'))
-            if config.GW_INET: all_icmp.append(('Internet', config.GW_INET, 'INET'))
-            for name, ip in current_servers.items(): all_icmp.append((name, ip, 'SERVER'))
-            for name, ip in current_aps.items(): all_icmp.append((name, ip, 'AP'))
-            for name, ip in current_critical.items(): all_icmp.append((name, ip, 'CRITICAL'))
+            if current_gw_wan:
+                all_icmp.append(('WAN_GW', current_gw_wan, 'WAN'))
+            if config.GW_INET:
+                all_icmp.append(('Internet', config.GW_INET, 'INET'))
+            for name, ip in current_servers.items():
+                all_icmp.append((name, ip, 'SERVER'))
+            for name, ip in current_aps.items():
+                all_icmp.append((name, ip, 'AP'))
+            for name, ip in current_critical.items():
+                all_icmp.append((name, ip, 'CRITICAL'))
             critical_ips = set(current_critical.values())
 
             # Inisialisasi state awal
@@ -747,7 +750,7 @@ async def task_monitor_netwatch():
                             dur_str = "Unknown"
                             if tdown:
                                 dur = (datetime.datetime.now() - tdown).total_seconds()
-                                dur_str = f"{int(dur//60)}m {int(dur%60)}s"
+                                dur_str = f"{int(dur // 60)}m {int(dur % 60)}s"
 
                             await asyncio.to_thread(database.log_incident_up, host)
                             recoveries_to_send.append((host, dur_str))
@@ -811,9 +814,11 @@ async def task_monitor_netwatch():
                     if h == "DNS_Resolv":
                         host_label = f"DNS Resolver ({_dns_label()})"
                     for tup in all_icmp:
-                        if tup[1] == h: host_label = f"{tup[0]} ({tup[2]})"
+                        if tup[1] == h:
+                            host_label = f"{tup[0]} ({tup[2]})"
                     for srv in config.TCP_SERVICES:
-                        if f"{srv['ip']}:{srv['port']}" == h: host_label = f"TCP {srv['name']} ({srv['port']})"
+                        if f"{srv['ip']}:{srv['port']}" == h:
+                            host_label = f"TCP {srv['name']} ({srv['port']})"
                     fail_threshold = _host_fail_threshold(h)
 
                     msg = (f"🚨 <b>DOWN — {host_label}</b>\n"
@@ -834,9 +839,11 @@ async def task_monitor_netwatch():
                     if h == "DNS_Resolv":
                         host_label = f"DNS Resolver ({_dns_label()})"
                     for tup in all_icmp:
-                        if tup[1] == h: host_label = f"{tup[0]} ({tup[2]})"
+                        if tup[1] == h:
+                            host_label = f"{tup[0]} ({tup[2]})"
                     for srv in config.TCP_SERVICES:
-                        if f"{srv['ip']}:{srv['port']}" == h: host_label = f"TCP {srv['name']} ({srv['port']})"
+                        if f"{srv['ip']}:{srv['port']}" == h:
+                            host_label = f"TCP {srv['name']} ({srv['port']})"
 
                     msg = (f"✅ <b>RECOVERY — {host_label}</b>\n"
                            f"IP/Target: {h}\n"

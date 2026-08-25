@@ -10,7 +10,7 @@ from datetime import datetime
 
 from .connection import pool
 from .decorators import with_retry, cached, to_bool, to_int, format_bytes
-from ._arp_utils import _truthy, _is_active_arp_entry  # FIND-25 FIX: import dari canonical source
+from ._arp_utils import _is_active_arp_entry  # FIND-25 FIX: import dari canonical source
 import core.config as cfg
 
 logger = logging.getLogger(__name__)
@@ -133,11 +133,26 @@ def set_interface_status(iface_name: str, disabled: bool):
     """Enable atau disable sebuah interface berdasarkan namanya."""
     api = pool.get_api()
     iface_path = api.path('interface')
-    found = list(iface_path(name=iface_name))
+    found = [i for i in list(iface_path) if i.get('name') == iface_name]
     if not found:
         return False
     iface_id = found[0]['.id']
-    iface_path.update(**{'.id': iface_id, 'disabled': str(disabled).lower()})
+    cmd = 'disable' if disabled else 'enable'
+    tuple(iface_path(cmd, **{'.id': iface_id}))
+    return True
+
+
+@with_retry
+def set_bridge_port_status(iface_name: str, disabled: bool):
+    """Enable atau disable port bridge untuk interface tertentu."""
+    api = pool.get_api()
+    port_path = api.path('interface', 'bridge', 'port')
+    found = [p for p in list(port_path) if p.get('interface') == iface_name]
+    if not found:
+        return False
+    port_id = found[0]['.id']
+    cmd = 'disable' if disabled else 'enable'
+    tuple(port_path(cmd, **{'.id': port_id}))
     return True
 
 

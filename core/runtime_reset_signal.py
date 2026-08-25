@@ -11,7 +11,10 @@ logger = logging.getLogger(__name__)
 _RUNTIME_RESET_SIGNAL_FILE = DATA_DIR / "runtime_reset_signal.json"
 
 
-def emit_runtime_reset_signal(reason="manual", clear_runtime_config=False, signal_file=None):
+def emit_runtime_reset_signal(
+        reason="manual",
+        clear_runtime_config=False,
+        signal_file=None):
     """Tulis sinyal reset runtime lintas-proses secara atomik."""
     target_file = signal_file or _RUNTIME_RESET_SIGNAL_FILE
     payload = {

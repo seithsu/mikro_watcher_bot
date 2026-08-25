@@ -44,6 +44,7 @@ htmlcov/
 # ============ Private Operational Docs ============
 *.md
 !README.md
+!docs/*.md
 tools/mikrotik_direct_stage3_longterm_ready.rsc
 HANDOVER_*.md
 HANDOVER_OPERATOR_*.md

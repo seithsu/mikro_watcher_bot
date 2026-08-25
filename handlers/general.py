@@ -1,7 +1,8 @@
 import logging
 import time
 import asyncio
-from datetime import datetime  # FIND-27 FIX: pindah ke top-level dari dalam cmd_status
+# FIND-27 FIX: pindah ke top-level dari dalam cmd_status
+from datetime import datetime
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
@@ -13,13 +14,15 @@ from services.runtime_reset import reset_runtime_data
 from .utils import (
     _check_access, get_back_button, append_back_button, format_bytes_auto,
     read_state_json, escape_html, generic_error_html, set_cache_with_ts, get_cache_if_fresh,
-    with_menu_timestamp, format_duration_hms, format_voltage  # FIND-26 FIX: import format_voltage
+    # FIND-26 FIX: import format_voltage
+    with_menu_timestamp, format_duration_hms, format_voltage
 )
 from core import database
 
 logger = logging.getLogger(__name__)
 
-# C2 FIX: reboot cooldown state di modul sendiri — tidak lagi import dari bot.py
+# C2 FIX: reboot cooldown state di modul sendiri — tidak lagi import dari
+# bot.py
 _last_reboot_time = 0
 _MTLOG_FILTER_KEYWORDS = {
     'error': ['error', 'critical'],
@@ -130,7 +133,8 @@ async def _get_device_header():
             rb_text = f"Device: <b>{dev_str}</b>{ros_str}\n"
     except Exception as e:
         logger.debug("Suppressed non-fatal exception: %s", e)
-    # Fallback: jika routerboard info kosong/tidak tersedia, pakai identity dari resource system.
+    # Fallback: jika routerboard info kosong/tidak tersedia, pakai identity
+    # dari resource system.
     if rb_text == "Device: <b>-</b>\n":
         if identity:
             ros_str = f" ROS v{ros_version}" if ros_version else ""
@@ -266,10 +270,14 @@ async def _build_home_menu():
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """/start command handler."""
     user = update.effective_user
-    if await _check_access(update, user, "/start"): return
+    if await _check_access(update, user, "/start"):
+        return
     catat(user.id, user.username, "/start", "berhasil")
 
-    if getattr(cfg, "ALERT_REQUIRE_START", False) and not update.callback_query:
+    if getattr(
+        cfg,
+        "ALERT_REQUIRE_START",
+            False) and not update.callback_query:
         try:
             from monitor.alerts import set_alert_delivery_enabled
             await asyncio.to_thread(
@@ -294,8 +302,10 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         except Exception as e:
             logger.debug("Suppressed non-fatal exception: %s", e)
-    try: await update.message.delete()
-    except Exception as e: logger.debug("Non-fatal UI update error: %s", e)
+    try:
+        await update.message.delete()
+    except Exception as e:
+        logger.debug("Non-fatal UI update error: %s", e)
     await update.effective_message.reply_text(pesan, parse_mode='HTML', reply_markup=reply_markup)
 
 
@@ -362,7 +372,9 @@ _MENU_CATEGORIES = {
 }
 
 
-async def callback_menu_cat(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def callback_menu_cat(
+        update: Update,
+        context: ContextTypes.DEFAULT_TYPE):
     """Handle sub-menu category callbacks — with consistent header like home menu."""
     query = update.callback_query
     user = query.from_user
@@ -404,7 +416,9 @@ async def callback_menu_cat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
-async def callback_reset_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def callback_reset_data(
+        update: Update,
+        context: ContextTypes.DEFAULT_TYPE):
     """Reset histori/state runtime dari menu bot dengan konfirmasi dua langkah."""
     query = update.callback_query
     user = query.from_user
@@ -422,8 +436,7 @@ async def callback_reset_data(update: Update, context: ContextTypes.DEFAULT_TYPE
             "pending ack, dan file log runtime agar baseline kembali fresh.\n\n"
             "<b>Tidak mengubah</b> <code>.env</code> dan default-nya juga tidak menghapus "
             "<code>data/runtime_config.json</code>.\n\n"
-            "Lanjutkan reset?"
-        )
+            "Lanjutkan reset?")
         text = with_menu_timestamp(text)
         keyboard = InlineKeyboardMarkup([
             [
@@ -451,7 +464,9 @@ async def callback_reset_data(update: Update, context: ContextTypes.DEFAULT_TYPE
                     "reset_data_menu",
                 )
             except Exception as gate_err:
-                logger.debug("Reset data: gagal mengaktifkan ulang alert gate: %s", gate_err)
+                logger.debug(
+                    "Reset data: gagal mengaktifkan ulang alert gate: %s",
+                    gate_err)
 
         db = result.get("database", {})
         text = (
@@ -470,7 +485,7 @@ async def callback_reset_data(update: Update, context: ContextTypes.DEFAULT_TYPE
             ]
         ])
         await query.edit_message_text(text, parse_mode='HTML', reply_markup=keyboard)
-    except Exception as e:
+    except Exception:
         logger.exception("Reset data via bot gagal")
         await query.edit_message_text(
             generic_error_html("Reset data gagal"),
@@ -487,8 +502,7 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     from core.config import BOT_VERSION
     pesan = (
-        f"📖 <b>DAFTAR PERINTAH</b> <i>v{BOT_VERSION}</i>\n\n"
-        "<b>📊 Monitor</b>\n"
+        f"📖 <b>DAFTAR PERINTAH</b> <i>v{BOT_VERSION}</i>\n\n" "<b>📊 Monitor</b>\n"
         "/start — Menu Utama\n"
         "/status — Status Router & Network\n"
         "/history — Riwayat Downtime\n"
@@ -529,8 +543,7 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Jika alert gate aktif, notifikasi monitor baru aktif setelah /start.\n"
         "Jumlah paket /ping diatur lewat <code>PING_COUNT</code>; "
         "<code>NETWATCH_PING_CONCURRENCY</code> hanya mengatur banyaknya host yang dicek paralel.\n"
-        "Semua menu utama menampilkan timestamp lokal bot.\n"
-    )
+        "Semua menu utama menampilkan timestamp lokal bot.\n")
     pesan = with_menu_timestamp(pesan)
     catat(user.id, user.username, "/help", "berhasil")
     if update.callback_query:
@@ -569,7 +582,12 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
         from mikrotik.connection import pool
         state = await asyncio.to_thread(read_state_json)
         api_diag = pool.connection_diagnostics()
-        api_connected = bool(api_diag.get("healthy", False)) and state.get("api_connected", True) is not False
+        api_connected = bool(
+            api_diag.get(
+                "healthy",
+                False)) and state.get(
+            "api_connected",
+            True) is not False
 
         if not api_connected:
             pesan = _build_api_unavailable_message(state, api_diag)
@@ -582,10 +600,16 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         from mikrotik import (
-            get_status, get_interfaces, get_dhcp_usage_count, get_dhcp_pool_capacity, get_dhcp_leases,
-            get_monitored_aps, get_monitored_servers, get_monitored_critical_devices,
-            get_default_gateway, get_active_critical_device_names
-        )
+            get_status,
+            get_interfaces,
+            get_dhcp_usage_count,
+            get_dhcp_pool_capacity,
+            get_dhcp_leases,
+            get_monitored_aps,
+            get_monitored_servers,
+            get_monitored_critical_devices,
+            get_default_gateway,
+            get_active_critical_device_names)
         from core.config import DHCP_POOL_SIZE, GW_WAN, GW_INET, MIKROTIK_IP
 
         # Sequential calls — hindari concurrent access ke router
@@ -617,41 +641,46 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
         total_ram = int(info['ram_total'])
         free_ram = int(info['ram_free'])
         used_ram = total_ram - free_ram
-        ram_pct = ((used_ram) / total_ram) * 100 if total_ram > 0 else 0
-        used_ram_mb = used_ram / (1024*1024)
-        total_ram_mb = total_ram / (1024*1024)
-        free_ram_mb = free_ram / (1024*1024)
-        
-
+        used_ram_mb = used_ram / (1024 * 1024)
+        total_ram_mb = total_ram / (1024 * 1024)
 
         up_text = info['uptime']
-        
+
         # Ambil matriks dari state.json via shared utility
         kategori_net = state.get('kategori', '🟢 NORMAL')
         hosts = state.get('hosts', {})
+
         def up(h):
-            return _host_state_icon(hosts.get(h), api_connected=state.get("api_connected", True))
+            return _host_state_icon(
+                hosts.get(h), api_connected=state.get(
+                    "api_connected", True))
 
         # Cek newest lease
         newest_lease = "Unknown"
         if leases:
-            dyn_leases = [l for l in leases if l.get('dynamic')]
+            dyn_leases = [lease for lease in leases if lease.get('dynamic')]
             if dyn_leases:
                 # Prefer bound leases as they are actively connected
-                bound_leases = [l for l in dyn_leases if l.get('status') == 'bound']
+                bound_leases = [
+                    lease for lease in dyn_leases if lease.get('status') == 'bound']
                 target_list = bound_leases if bound_leases else dyn_leases
                 if target_list:
                     last = target_list[-1]
                     last_seen = last.get('last-seen', '')
-                    newest_lease = f"{last.get('address')} ({last.get('host', '-')})"
+                    newest_lease = f"{
+                        last.get('address')} ({
+                        last.get(
+                            'host', '-')})"
                     if last_seen:
                         newest_lease += f" seen {last_seen}"
 
         effective_dhcp_pool_size = int(dhcp_pool_size or DHCP_POOL_SIZE or 0)
-        pool_pct_dhcp = (dhcp_count / effective_dhcp_pool_size) * 100 if effective_dhcp_pool_size > 0 else 0
+        pool_pct_dhcp = (dhcp_count / effective_dhcp_pool_size) * \
+            100 if effective_dhcp_pool_size > 0 else 0
 
         # Waktu
-        tz_label = datetime.now().astimezone().tzname() or "LOCAL"  # FIND-27 FIX: pakai top-level import
+        # FIND-27 FIX: pakai top-level import
+        tz_label = datetime.now().astimezone().tzname() or "LOCAL"
         now_str = datetime.now().strftime(f"%Y-%m-%d %H:%M:%S {tz_label}")
 
         # Calculate Disk usage
@@ -659,8 +688,8 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
         free_disk = int(info.get('disk_free', 0))
         used_disk = total_disk - free_disk
         disk_pct = (used_disk / total_disk) * 100 if total_disk > 0 else 0
-        used_disk_mb = used_disk / (1024*1024)
-        total_disk_mb = total_disk / (1024*1024)
+        used_disk_mb = used_disk / (1024 * 1024)
+        total_disk_mb = total_disk / (1024 * 1024)
 
         from core.config import INSTITUTION_NAME, BOT_IP
 
@@ -683,9 +712,11 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"<b>📱 Koneksi Perangkat:</b>\n"
             f"- Router ({MIKROTIK_IP}): {up(MIKROTIK_IP)}\n"
         )
-        if current_gw_wan: pesan += f"- WAN Gateway ({current_gw_wan}): {up(current_gw_wan)}\n"
-        if GW_INET: pesan += f"- Internet ({GW_INET}): {up(GW_INET)}\n"
-        
+        if current_gw_wan:
+            pesan += f"- WAN Gateway ({current_gw_wan}): {up(current_gw_wan)}\n"
+        if GW_INET:
+            pesan += f"- Internet ({GW_INET}): {up(GW_INET)}\n"
+
         for k, v in current_servers.items():
             pesan += f"- {k} ({v}): {up(v)}\n"
 
@@ -693,112 +724,146 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pesan += f"- [Penting] {k} ({v}): {up(v)}\n"
 
         active_critical_names = await asyncio.to_thread(get_active_critical_device_names)
-        unresolved_critical = [n for n in active_critical_names if n not in current_critical]
+        unresolved_critical = [
+            n for n in active_critical_names if n not in current_critical]
         for name in unresolved_critical:
             pesan += f"- [Penting] {name}: ⚪ Unknown (hostname DHCP belum ditemukan)\n"
-            
+
         for ap_name, ap_ip in current_aps.items():
             pesan += f"- {ap_name} ({ap_ip}): {up(ap_ip)}\n"
-            
+
         pesan += f"- Bot Server ({BOT_IP}): 🟦 Bekerja\n\n"
 
         pesan += (
             f"<b>⚙️ Kesehatan Sistem:</b>\n"
             f"- Uptime: {up_text}\n"
         )
-        
+
         # Format CPU info
         cpu_info = f"- Prosesor: {info['cpu']}% terpakai"
-        if info.get('cpu_freq'): cpu_info += f" @ {info['cpu_freq']}MHz"
-        if info.get('cpu_count', 1) > 1: cpu_info += f" ({info['cpu_count']} cores)"
+        if info.get('cpu_freq'):
+            cpu_info += f" @ {info['cpu_freq']}MHz"
+        if info.get('cpu_count', 1) > 1:
+            cpu_info += f" ({info['cpu_count']} cores)"
         pesan += f"{cpu_info}\n"
-        
-        pesan += f"- Memori: {used_ram_mb:.1f}MB terpakai dari {total_ram_mb:.1f}MB\n"
+
+        pesan += f"- Memori: {
+            used_ram_mb:.1f}MB terpakai dari {
+            total_ram_mb:.1f}MB\n"
         if total_disk > 0:
-            pesan += f"- Penyimpanan: {disk_pct:.1f}% terpakai ({used_disk_mb:.1f}MB dari {total_disk_mb:.1f}MB)\n"
-        
+            pesan += f"- Penyimpanan: {
+                disk_pct:.1f}% terpakai ({
+                used_disk_mb:.1f}MB dari {
+                total_disk_mb:.1f}MB)\n"
+
         # Format Hardware & OS info
         board_model = []
-        if info.get('board') and info['board'] != '?': board_model.append(info['board'])
-        if info.get('model'): board_model.append(info['model'])
+        if info.get('board') and info['board'] != '?':
+            board_model.append(info['board'])
+        if info.get('model'):
+            board_model.append(info['model'])
         if board_model:
             pesan += f"- Device: {' '.join(board_model)}\n"
-            
+
         os_fw = []
-        if info.get('version') and info['version'] != '?': os_fw.append(f"RouterOS v{info['version']}")
-        if info.get('current_firmware'): os_fw.append(f"Firmware {info['current_firmware']}")
+        if info.get('version') and info['version'] != '?':
+            os_fw.append(f"RouterOS v{info['version']}")
+        if info.get('current_firmware'):
+            os_fw.append(f"Firmware {info['current_firmware']}")
         if os_fw:
             pesan += f"- System: {' | '.join(os_fw)}\n"
-            
+
         # Format Sensors
         sensors = []
-        if info.get('cpu_temp'): sensors.append(f"🌡️ {info['cpu_temp']}°C")
+        if info.get('cpu_temp'):
+            sensors.append(f"🌡️ {info['cpu_temp']}°C")
         if info.get('voltage'):
-            v_str = format_voltage(info['voltage'])  # FIND-26 FIX: gunakan shared helper
+            # FIND-26 FIX: gunakan shared helper
+            v_str = format_voltage(info['voltage'])
             if v_str:
                 sensors.append(f"⚡ {v_str}")
-                
+
         if sensors:
             pesan += f"- Sensors: {' | '.join(sensors)}\n"
 
-        pesan += f"\n<b>🔌 Interface:</b>\n"
+        pesan += "\n<b>🔌 Interface:</b>\n"
 
-        indibiz = next((i for i in interfaces if 'indibiz' in i['name'].lower() or 'ether1' in i['name'].lower()), None)
-        local = next((i for i in interfaces if 'local' in i['name'].lower() or 'ether2' in i['name'].lower()), None)
+        indibiz = next((i for i in interfaces if 'indibiz' in i['name'].lower(
+        ) or 'ether1' in i['name'].lower()), None)
+        local = next((i for i in interfaces if 'local' in i['name'].lower(
+        ) or 'ether2' in i['name'].lower()), None)
 
         if indibiz:
             irun = "🟢 UP" if indibiz['running'] else "🔴 DOWN"
-            pesan += f"- INDIBIZ: {irun} | link-downs: {indibiz.get('link_downs', 0)} | rx/tx errors: {indibiz.get('rx_error', 0)}/{indibiz.get('tx_error', 0)}\n"
+            pesan += f"- INDIBIZ: {irun} | link-downs: {
+                indibiz.get(
+                    'link_downs',
+                    0)} | rx/tx errors: {
+                indibiz.get(
+                    'rx_error',
+                    0)}/{
+                indibiz.get(
+                    'tx_error',
+                    0)}\n"
         if local:
             lrun = "🟢 UP" if local['running'] else "🔴 DOWN"
-            pesan += f"- LOCAL: {lrun} | link-downs: {local.get('link_downs', 0)} | rx/tx errors: {local.get('rx_error', 0)}/{local.get('tx_error', 0)}\n"
+            pesan += f"- LOCAL: {lrun} | link-downs: {
+                local.get(
+                    'link_downs',
+                    0)} | rx/tx errors: {
+                local.get(
+                    'rx_error',
+                    0)}/{
+                local.get(
+                    'tx_error',
+                    0)}\n"
 
         pesan += (
             f"\n<b>DHCP:</b>\n"
             f"- Pool: {dhcp_count}/{effective_dhcp_pool_size} ({pool_pct_dhcp:.0f}%)\n"
             f"- Lease newest: {newest_lease}\n\n"
         )
-        
+
         pesan += (
-            f"<b>Saran tindakan:</b>\n"
-            f"1) Periksa status indikator silang ❌ di matriks\n"
-            f"2) Jika 🔴 CORE DOWN, utamakan periksa Router / Indibiz\n"
-            f"3) Jika 🟡 WIFI PARTIAL, periksa jalur switch ke AP mati"
+            "<b>Saran tindakan:</b>\n"
+            "1) Periksa status indikator silang ❌ di matriks\n"
+            "2) Jika 🔴 CORE DOWN, utamakan periksa Router / Indibiz\n"
+            "3) Jika 🟡 WIFI PARTIAL, periksa jalur switch ke AP mati"
         )
 
         catat(user.id, user.username, "/status", "berhasil")
-        
+
         keyboard = []
-        keyboard.append([InlineKeyboardButton("🔄 Refresh", callback_data="status_full")])
-             
+        keyboard.append([InlineKeyboardButton(
+            "🔄 Refresh", callback_data="status_full")])
+
         reply_markup = InlineKeyboardMarkup(keyboard)
-             
+
         try:
-             import telegram.error
-             await msg_load.edit_text(pesan, parse_mode='HTML', reply_markup=append_back_button(reply_markup, 'menu_monitor'))
+            import telegram.error
+            await msg_load.edit_text(pesan, parse_mode='HTML', reply_markup=append_back_button(reply_markup, 'menu_monitor'))
         except telegram.error.BadRequest as e:
-             if 'not modified' in str(e).lower():
-                  pass # abaikan error ini
-             else:
-                  await update.effective_message.reply_text(pesan, parse_mode='HTML', reply_markup=append_back_button(reply_markup, 'menu_monitor'))
+            if 'not modified' in str(e).lower():
+                pass  # abaikan error ini
+            else:
+                await update.effective_message.reply_text(pesan, parse_mode='HTML', reply_markup=append_back_button(reply_markup, 'menu_monitor'))
         except Exception:
-             await update.effective_message.reply_text(pesan, parse_mode='HTML', reply_markup=append_back_button(reply_markup, 'menu_monitor'))
+            await update.effective_message.reply_text(pesan, parse_mode='HTML', reply_markup=append_back_button(reply_markup, 'menu_monitor'))
 
     except Exception as e:
         catat(user.id, user.username, "/status", f"gagal: {e}")
         try:
-             await msg_load.edit_text(
-                 generic_error_html("Gagal mengambil status router"),
-                 parse_mode='HTML',
-                 reply_markup=get_back_button('menu_monitor')
-             )
+            await msg_load.edit_text(
+                generic_error_html("Gagal mengambil status router"),
+                parse_mode='HTML',
+                reply_markup=get_back_button('menu_monitor')
+            )
         except Exception:
-             await update.effective_message.reply_text(
-                 generic_error_html("Gagal mengambil status router"),
-                 parse_mode='HTML',
-                 reply_markup=get_back_button('menu_monitor')
-             )
-
+            await update.effective_message.reply_text(
+                generic_error_html("Gagal mengambil status router"),
+                parse_mode='HTML',
+                reply_markup=get_back_button('menu_monitor')
+            )
 
 
 async def cmd_history(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -827,11 +892,11 @@ async def cmd_history(update: Update, context: ContextTypes.DEFAULT_TYPE):
     total = await asyncio.to_thread(database.count_all_incidents)
     total_pages = max(1, (total + per_page - 1) // per_page)
     page = max(0, min(page, total_pages - 1))
-    
+
     history = await asyncio.to_thread(
         database.get_recent_history, per_page, offset=page * per_page
     )
-    
+
     if not history and page == 0:
         pesan = "\u2705 Tidak ada catatan downtime yang terekam dalam database."
     else:
@@ -863,13 +928,23 @@ async def cmd_history(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Pagination buttons
     nav = []
     if page > 0:
-        nav.append(InlineKeyboardButton("◀️ Prev", callback_data=f"history_{page - 1}"))
+        nav.append(
+            InlineKeyboardButton(
+                "◀️ Prev",
+                callback_data=f"history_{
+                    page - 1}"))
     if page < total_pages - 1:
-        nav.append(InlineKeyboardButton("Next ▶️", callback_data=f"history_{page + 1}"))
+        nav.append(
+            InlineKeyboardButton(
+                "Next ▶️",
+                callback_data=f"history_{
+                    page + 1}"))
     keyboard = [nav] if nav else []
-    keyboard.append([InlineKeyboardButton("🔄 Refresh", callback_data="history_0")])
+    keyboard.append([InlineKeyboardButton(
+        "🔄 Refresh", callback_data="history_0")])
 
-    reply_markup = append_back_button(InlineKeyboardMarkup(keyboard), 'menu_monitor')
+    reply_markup = append_back_button(
+        InlineKeyboardMarkup(keyboard), 'menu_monitor')
 
     catat(user.id, user.username, "/history", "berhasil")
     if update.callback_query:
@@ -903,16 +978,17 @@ async def cmd_audit(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         from mikrotik import _pool
         from mikrotik.decorators import to_bool
-        
+
         def run_audit():
             api = _pool.get_api()
             report = []
-            
+
             # 1. Cek User Default (admin)
             users = list(api.path('user'))
             has_admin = any(u.get('name') == 'admin' for u in users)
             if has_admin:
-                report.append("❌ Ada user default 'admin' yang berisiko di-bruteforce.")
+                report.append(
+                    "❌ Ada user default 'admin' yang berisiko di-bruteforce.")
             else:
                 report.append("✅ Tidak ada user 'admin' standar.")
 
@@ -920,14 +996,17 @@ async def cmd_audit(update: Update, context: ContextTypes.DEFAULT_TYPE):
             services = list(api.path('ip', 'service'))
             open_risky = []
             for s in services:
-                if not to_bool(s.get('disabled', False)) and s.get('name') in ['telnet', 'ftp', 'www', 'ssh']:
+                if not to_bool(s.get('disabled', False)) and s.get(
+                        'name') in ['telnet', 'ftp', 'www', 'ssh']:
                     # cek apakah dibatasi ip list / subnet
                     addr = s.get('address', '')
                     if not addr:
                         open_risky.append(s['name'])
-                        
+
             if open_risky:
-                report.append(f"❌ Layanan berikut terbuka untuk publik (tanpa IP allowance): {', '.join(open_risky)}")
+                report.append(
+                    f"❌ Layanan berikut terbuka untuk publik (tanpa IP allowance): {
+                        ', '.join(open_risky)}")
             else:
                 report.append("✅ Layanan kritis aman (dibatasi/didisable).")
 
@@ -935,24 +1014,27 @@ async def cmd_audit(update: Update, context: ContextTypes.DEFAULT_TYPE):
             dns_settings = list(api.path('ip', 'dns'))
             allow_remote = False
             for d in dns_settings:
-                 if to_bool(d.get('allow-remote-requests', False)):
-                      allow_remote = True
-                      break
-            
+                if to_bool(d.get('allow-remote-requests', False)):
+                    allow_remote = True
+                    break
+
             if allow_remote:
-                 # cek apakah traffic dns difilter lewat firewall
-                 firewall = list(api.path('ip', 'firewall', 'filter'))
-                 # heuristik: cek apakah ada drop port 53
-                 has_filter = any(f.get('dst-port') == '53' and f.get('action') == 'drop' for f in firewall)
-                 if not has_filter:
-                      report.append("⚠️ DNS Allow-Remote nyala, dan tidak terlihat ada blokir port 53 di Firewall! Berisiko terkena DNS Amplification DDoS.")
-                 else:
-                      report.append("✅ DNS Remote nyala, tetapi ada proteksi di firewall.")
+                # cek apakah traffic dns difilter lewat firewall
+                firewall = list(api.path('ip', 'firewall', 'filter'))
+                # heuristik: cek apakah ada drop port 53
+                has_filter = any(
+                    f.get('dst-port') == '53' and f.get('action') == 'drop' for f in firewall)
+                if not has_filter:
+                    report.append(
+                        "⚠️ DNS Allow-Remote nyala, dan tidak terlihat ada blokir port 53 di Firewall! Berisiko terkena DNS Amplification DDoS.")
+                else:
+                    report.append(
+                        "✅ DNS Remote nyala, tetapi ada proteksi di firewall.")
             else:
-                 report.append("✅ DNS Remote mati (Aman).")
-                 
+                report.append("✅ DNS Remote mati (Aman).")
+
             return "\n\n".join(report)
-            
+
         hasil_audit = await asyncio.to_thread(run_audit)
 
         pesan = f"🛡️ <b>HASIL AUDIT KEAMANAN (BASIC)</b>\n➖➖➖➖➖➖➖➖➖➖➖➖➖➖\n\n{hasil_audit}"
@@ -961,7 +1043,8 @@ async def cmd_audit(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if update.callback_query:
             try:
                 await msg.edit_text(pesan, parse_mode='HTML', reply_markup=get_back_button('menu_monitor'))
-            except Exception as e: logger.debug("Non-fatal UI update error: %s", e)
+            except Exception as e:
+                logger.debug("Non-fatal UI update error: %s", e)
         else:
             await update.effective_message.reply_text(pesan, parse_mode='HTML', reply_markup=get_back_button())
 
@@ -974,7 +1057,8 @@ async def cmd_audit(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     parse_mode='HTML',
                     reply_markup=get_back_button()
                 )
-            except Exception as e: logger.debug("Non-fatal UI update error: %s", e)
+            except Exception as e:
+                logger.debug("Non-fatal UI update error: %s", e)
         else:
             await update.effective_message.reply_text(
                 generic_error_html("Audit gagal dijalankan"),
@@ -989,17 +1073,18 @@ async def cmd_reboot(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if await _check_access(update, user, "/reboot"):
         return
 
-    import time
+
     from core.config import REBOOT_COOLDOWN
 
-    # C2 FIX: Gunakan _last_reboot_time dari modul ini sendiri, bukan 'import bot'
+    # C2 FIX: Gunakan _last_reboot_time dari modul ini sendiri, bukan 'import
+    # bot'
     now = time.time()
     elapsed = now - _last_reboot_time
     if elapsed < REBOOT_COOLDOWN:
         sisa = int(REBOOT_COOLDOWN - elapsed)
         if update.callback_query:
-             await update.callback_query.answer(f"Cooldown! Tunggu {sisa} detik", show_alert=True)
-             return
+            await update.callback_query.answer(f"Cooldown! Tunggu {sisa} detik", show_alert=True)
+            return
         await update.effective_message.reply_text(f"⚠️ Cooldown aktif! Tunggu {sisa} detik lagi sebelum reboot.")
         return
 
@@ -1010,18 +1095,19 @@ async def cmd_reboot(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     keyboard = [
         [
-            InlineKeyboardButton("🚨 YA, REBOOT SEKARANG", callback_data='reboot_confirm'),
-            InlineKeyboardButton("❌ BATAL", callback_data='cmd_start')
-        ]
-    ]
+            InlineKeyboardButton(
+                "🚨 YA, REBOOT SEKARANG",
+                callback_data='reboot_confirm'),
+            InlineKeyboardButton(
+                "❌ BATAL",
+                callback_data='cmd_start')]]
     reply_markup = InlineKeyboardMarkup(keyboard)
-    
+
     pesan_reboot = (
         "⚠️ <b>PERINGATAN!</b>\n\n"
         "Anda akan melakukan <b>RESTART</b> pada router.\n"
         "Semua koneksi internet dan jaringan akan terputus selama 1-2 menit.\n\n"
-        "Apakah Anda <b>yakin</b> ingin melanjutkan?"
-    )
+        "Apakah Anda <b>yakin</b> ingin melanjutkan?")
     pesan_reboot = with_menu_timestamp(pesan_reboot)
     if update.callback_query:
         try:
@@ -1054,13 +1140,13 @@ async def cmd_backup(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("🔙 Menu Utama", callback_data='cmd_start')]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
-    
+
     pesan_backup = with_menu_timestamp(
         "💾 <b>BACKUP</b>\n\n"
         "Pilih tipe backup yang ingin diunduh:"
     )
     catat(user.id, user.username, "/backup", "menunggu-pilihan")
-    
+
     if update.callback_query:
         try:
             await _edit_or_reply_text(
@@ -1078,9 +1164,11 @@ async def cmd_log(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Perintah /log - Lihat log penggunaan bot."""
     user = update.effective_user
 
-    if await _check_access(update, user, "/log"): return
+    if await _check_access(update, user, "/log"):
+        return
 
-    if update.callback_query: await update.callback_query.answer()
+    if update.callback_query:
+        await update.callback_query.answer()
 
     import asyncio
     logs = await asyncio.to_thread(baca_log, 10)
@@ -1123,7 +1211,15 @@ def _format_mtlog_page(filtered_logs, topic_filter, page=0, per_page=10):
     else:
         for log in page_logs:
             topics = log.get('topics', '').replace(',', ' | ')
-            safe_msg = log.get('message', '').replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+            safe_msg = log.get(
+                'message',
+                '').replace(
+                '&',
+                '&amp;').replace(
+                '<',
+                '&lt;').replace(
+                '>',
+                '&gt;')
             text += f"⏰ {log.get('time', '')}\n"
             text += f"🏷️ {topics}\n"
             text += f"📝 <code>{safe_msg}</code>\n\n"
@@ -1131,9 +1227,17 @@ def _format_mtlog_page(filtered_logs, topic_filter, page=0, per_page=10):
     # Navigation buttons
     nav_buttons = []
     if page > 0:
-        nav_buttons.append(InlineKeyboardButton("◀️ Prev", callback_data=f"mtlogpage_{topic_filter}_{page - 1}"))
+        nav_buttons.append(
+            InlineKeyboardButton(
+                "◀️ Prev",
+                callback_data=f"mtlogpage_{topic_filter}_{
+                    page - 1}"))
     if page < total_pages - 1:
-        nav_buttons.append(InlineKeyboardButton("Next ▶️", callback_data=f"mtlogpage_{topic_filter}_{page + 1}"))
+        nav_buttons.append(
+            InlineKeyboardButton(
+                "Next ▶️",
+                callback_data=f"mtlogpage_{topic_filter}_{
+                    page + 1}"))
 
     reply_markup = _build_mtlog_filter_markup(nav_buttons=nav_buttons)
     return with_menu_timestamp(text), reply_markup
@@ -1143,7 +1247,8 @@ async def cmd_mtlog(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Perintah /mtlog - Lihat log dari MikroTik dengan filter."""
     user = update.effective_user
 
-    if await _check_access(update, user, "/mtlog"): return
+    if await _check_access(update, user, "/mtlog"):
+        return
 
     topic_filter = "all"
     first_arg = _get_first_context_arg(context)
@@ -1154,7 +1259,7 @@ async def cmd_mtlog(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     msg = None
     try:
-        if update.callback_query: 
+        if update.callback_query:
             await update.callback_query.answer()
             try:
                 msg = update.callback_query.message
@@ -1164,7 +1269,10 @@ async def cmd_mtlog(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # FIND-12 FIX: Cache raw logs agar tidak re-fetch setiap kali filter diubah.
         # TTL 3 menit — cukup fresh untuk monitoring, hemat API call ke router.
         _RAW_LOG_CACHE_TTL = 180
-        logs = get_cache_if_fresh(context.bot_data, "mtlog_raw", ttl_seconds=_RAW_LOG_CACHE_TTL)
+        logs = get_cache_if_fresh(
+            context.bot_data,
+            "mtlog_raw",
+            ttl_seconds=_RAW_LOG_CACHE_TTL)
         if logs is None:
             logs = await asyncio.to_thread(get_mikrotik_log, 200)
             if logs is not None:
@@ -1204,7 +1312,8 @@ async def cmd_mtlog(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
 
-        text, reply_markup = _format_mtlog_page(filtered_logs, topic_filter, page=0)
+        text, reply_markup = _format_mtlog_page(
+            filtered_logs, topic_filter, page=0)
 
         catat(user.id, user.username, f"/mtlog {topic_filter}", "berhasil")
         await _edit_or_reply_text(
@@ -1252,7 +1361,8 @@ async def callback_mtlog(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     cache_key = f"mtlog_{topic_filter}"
-    filtered_logs = get_cache_if_fresh(context.bot_data, cache_key, ttl_seconds=900)
+    filtered_logs = get_cache_if_fresh(
+        context.bot_data, cache_key, ttl_seconds=900)
     if not filtered_logs:
         await query.answer("Data log sudah kedaluwarsa. Silakan refresh.", show_alert=True)
         return

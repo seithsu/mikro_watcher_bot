@@ -582,6 +582,10 @@ async def post_init(app: Application):
     ]
     await app.bot.set_my_commands(commands)
     logger.info("Bot commands menu updated.")
+    
+    from core.alert_queue import alert_worker
+    asyncio.create_task(alert_worker(app.bot))
+    
     await _notify_startup(app)
 
 

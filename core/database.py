@@ -22,7 +22,7 @@ _AUTO_COMPACT_MIN_FREE_RATIO = 0.25
 @contextmanager
 def _get_conn():
     """Thread-safe context manager untuk SQLite connection.
-    
+
     Setiap koneksi otomatis di-close setelah selesai.
     Timeout 10 detik untuk menghindari 'database is locked'.
     WAL mode diset sekali di _init_db() karena bersifat persistent.
@@ -40,7 +40,7 @@ def _init_db():
         # WAL mode bersifat persistent — cukup diset sekali saat init.
         conn.execute('PRAGMA journal_mode=WAL')
         c = conn.cursor()
-        
+
         # Tabel utama: incidents
         c.execute('''
             CREATE TABLE IF NOT EXISTS incidents (
@@ -54,7 +54,7 @@ def _init_db():
                 snapshot_text TEXT
             )
         ''')
-        
+
         # Tabel metrics: time-series data
         c.execute('''
             CREATE TABLE IF NOT EXISTS metrics (
@@ -65,7 +65,7 @@ def _init_db():
                 metadata TEXT
             )
         ''')
-        
+
         # Tabel audit_log: command audit trail
         c.execute('''
             CREATE TABLE IF NOT EXISTS audit_log (
@@ -78,30 +78,39 @@ def _init_db():
                 result TEXT
             )
         ''')
-        
+
         # Migration: tambah kolom tag jika belum ada
         try:
             c.execute("SELECT tag FROM incidents LIMIT 1")
         except sqlite3.OperationalError:
             c.execute("ALTER TABLE incidents ADD COLUMN tag TEXT")
 
-        # Migration: penanda alasan close incident (normal / auto-close / manual)
+        # Migration: penanda alasan close incident (normal / auto-close /
+        # manual)
         try:
             c.execute("SELECT closed_reason FROM incidents LIMIT 1")
         except sqlite3.OperationalError:
             c.execute("ALTER TABLE incidents ADD COLUMN closed_reason TEXT")
-            
+
         # Indexes
-        c.execute('CREATE INDEX IF NOT EXISTS idx_incidents_host ON incidents(host)')
-        c.execute('CREATE INDEX IF NOT EXISTS idx_incidents_waktu_down ON incidents(waktu_down)')
-        c.execute('CREATE INDEX IF NOT EXISTS idx_incidents_waktu_up ON incidents(waktu_up)')
+        c.execute(
+            'CREATE INDEX IF NOT EXISTS idx_incidents_host ON incidents(host)')
+        c.execute(
+            'CREATE INDEX IF NOT EXISTS idx_incidents_waktu_down ON incidents(waktu_down)')
+        c.execute(
+            'CREATE INDEX IF NOT EXISTS idx_incidents_waktu_up ON incidents(waktu_up)')
         c.execute('CREATE INDEX IF NOT EXISTS idx_incidents_tag ON incidents(tag)')
-        c.execute('CREATE INDEX IF NOT EXISTS idx_metrics_time ON metrics(timestamp)')
-        c.execute('CREATE INDEX IF NOT EXISTS idx_metrics_name ON metrics(metric_name)')
-        c.execute('CREATE INDEX IF NOT EXISTS idx_metrics_name_time ON metrics(metric_name, timestamp)')
-        c.execute('CREATE INDEX IF NOT EXISTS idx_audit_time ON audit_log(timestamp)')
-        c.execute('CREATE INDEX IF NOT EXISTS idx_audit_admin ON audit_log(admin_id)')
-        
+        c.execute(
+            'CREATE INDEX IF NOT EXISTS idx_metrics_time ON metrics(timestamp)')
+        c.execute(
+            'CREATE INDEX IF NOT EXISTS idx_metrics_name ON metrics(metric_name)')
+        c.execute(
+            'CREATE INDEX IF NOT EXISTS idx_metrics_name_time ON metrics(metric_name, timestamp)')
+        c.execute(
+            'CREATE INDEX IF NOT EXISTS idx_audit_time ON audit_log(timestamp)')
+        c.execute(
+            'CREATE INDEX IF NOT EXISTS idx_audit_admin ON audit_log(admin_id)')
+
         conn.commit()
 
 
@@ -117,7 +126,7 @@ def log_incident_down(host, kategori, snapshot_text="", tag=""):
     with _get_conn() as conn:
         c = conn.cursor()
         waktu_down = datetime.now().isoformat()
-        
+
         # Auto-tag berdasarkan kategori jika tidak disediakan
         if not tag:
             tag = _auto_tag(kategori, host)
@@ -130,7 +139,7 @@ def log_incident_down(host, kategori, snapshot_text="", tag=""):
         existing = c.fetchone()
         if existing:
             return existing[0]
-        
+
         c.execute(
             "INSERT INTO incidents (host, kategori, waktu_down, snapshot_text, tag) VALUES (?, ?, ?, ?, ?)",
             (host, kategori, waktu_down, snapshot_text, tag)
@@ -147,13 +156,13 @@ def log_incident_up(host, closed_reason="normal"):
     """
     with _get_conn() as conn:
         c = conn.cursor()
-        
+
         c.execute(
             "SELECT id, waktu_down FROM incidents WHERE host = ? AND waktu_up IS NULL ORDER BY id DESC",
             (host,)
         )
         rows = c.fetchall()
-        
+
         if rows:
             waktu_up_dt = datetime.now()
             waktu_up_iso = waktu_up_dt.isoformat()
@@ -162,14 +171,17 @@ def log_incident_up(host, closed_reason="normal"):
             for incident_id, waktu_down_iso in rows:
                 try:
                     waktu_down_dt = datetime.fromisoformat(waktu_down_iso)
-                    durasi_detik = int((waktu_up_dt - waktu_down_dt).total_seconds())
+                    durasi_detik = int(
+                        (waktu_up_dt - waktu_down_dt).total_seconds())
                 except ValueError:
                     durasi_detik = 0
 
                 c.execute(
                     "UPDATE incidents SET waktu_up = ?, durasi_detik = ?, closed_reason = ? WHERE id = ?",
-                    (waktu_up_iso, durasi_detik, closed_reason or "normal", incident_id)
-                )
+                    (waktu_up_iso,
+                     durasi_detik,
+                     closed_reason or "normal",
+                     incident_id))
                 updated += 1
             conn.commit()
             return updated
@@ -180,21 +192,17 @@ def get_recent_history(limit=10, tag_filter=None, offset=0):
     """Mengambil riwayat insiden terakhir, opsional filter by tag, dengan offset untuk pagination."""
     with _get_conn() as conn:
         c = conn.cursor()
-        
+
         if tag_filter:
             c.execute(
                 "SELECT host, kategori, waktu_down, waktu_up, durasi_detik, tag, closed_reason FROM incidents "
-                "WHERE tag = ? ORDER BY id DESC LIMIT ? OFFSET ?",
-                (tag_filter, limit, offset)
-            )
+                "WHERE tag = ? ORDER BY id DESC LIMIT ? OFFSET ?", (tag_filter, limit, offset))
         else:
             c.execute(
                 "SELECT host, kategori, waktu_down, waktu_up, durasi_detik, tag, closed_reason FROM incidents "
-                "ORDER BY id DESC LIMIT ? OFFSET ?",
-                (limit, offset)
-            )
+                "ORDER BY id DESC LIMIT ? OFFSET ?", (limit, offset))
         rows = c.fetchall()
-        
+
         results = []
         for r in rows:
             results.append({
@@ -284,8 +292,10 @@ def dedupe_open_incidents(host=None, closed_reason="deduped-open"):
                 durasi_detik = 0
             c.execute(
                 "UPDATE incidents SET waktu_up = ?, durasi_detik = ?, closed_reason = ? WHERE id = ?",
-                (now_iso, durasi_detik, closed_reason or "deduped-open", incident_id)
-            )
+                (now_iso,
+                 durasi_detik,
+                 closed_reason or "deduped-open",
+                 incident_id))
             updated += 1
 
         conn.commit()
@@ -315,8 +325,10 @@ def close_open_incidents_by_tag(tag, closed_reason="tag-closed"):
                 durasi_detik = 0
             c.execute(
                 "UPDATE incidents SET waktu_up = ?, durasi_detik = ?, closed_reason = ? WHERE id = ?",
-                (now_iso, durasi_detik, closed_reason or "tag-closed", incident_id)
-            )
+                (now_iso,
+                 durasi_detik,
+                 closed_reason or "tag-closed",
+                 incident_id))
             updated += 1
 
         conn.commit()
@@ -328,7 +340,7 @@ def get_stats_today():
     with _get_conn() as conn:
         c = conn.cursor()
         today_str = datetime.now().strftime("%Y-%m-%d")
-        
+
         c.execute(
             "SELECT count(*) FROM incidents WHERE waktu_down LIKE ?",
             (f"{today_str}%",)
@@ -347,20 +359,20 @@ def cleanup_old_data(days=60):
         c = conn.cursor()
         cutoff_date = datetime.now() - timedelta(days=days)
         cutoff_iso = cutoff_date.isoformat()
-        
+
         c.execute(
             "DELETE FROM incidents WHERE waktu_down < ? AND waktu_up IS NOT NULL",
             (cutoff_iso,)
         )
         deleted_incidents = c.rowcount
-        
+
         # Cleanup old metrics too (older than retention)
         c.execute(
             "DELETE FROM metrics WHERE timestamp < ?",
             (cutoff_iso,)
         )
         deleted_metrics = c.rowcount
-        
+
         # Cleanup old audit logs (older than 90 days)
         audit_cutoff = (datetime.now() - timedelta(days=90)).isoformat()
         c.execute(
@@ -368,7 +380,7 @@ def cleanup_old_data(days=60):
             (audit_cutoff,)
         )
         deleted_audit = c.rowcount
-        
+
         conn.commit()
         total_deleted = deleted_incidents + deleted_metrics + deleted_audit
     maybe_compact_db_file()
@@ -378,7 +390,8 @@ def cleanup_old_data(days=60):
 def _compact_db_file():
     """Padatkan file SQLite setelah purge besar agar ukuran file ikut turun."""
     try:
-        size_before = os.path.getsize(DB_PATH) if os.path.exists(DB_PATH) else 0
+        size_before = os.path.getsize(
+            DB_PATH) if os.path.exists(DB_PATH) else 0
         with sqlite3.connect(DB_PATH, timeout=30) as conn:
             conn.execute('PRAGMA wal_checkpoint(TRUNCATE)')
             conn.execute('VACUUM')
@@ -397,7 +410,8 @@ def get_db_storage_stats():
     with sqlite3.connect(DB_PATH, timeout=10) as conn:
         page_size = int(conn.execute('PRAGMA page_size').fetchone()[0] or 0)
         page_count = int(conn.execute('PRAGMA page_count').fetchone()[0] or 0)
-        freelist_count = int(conn.execute('PRAGMA freelist_count').fetchone()[0] or 0)
+        freelist_count = int(
+            conn.execute('PRAGMA freelist_count').fetchone()[0] or 0)
     file_bytes = page_size * page_count
     free_bytes = page_size * freelist_count
     return {
@@ -410,7 +424,9 @@ def get_db_storage_stats():
     }
 
 
-def maybe_compact_db_file(min_free_bytes=_AUTO_COMPACT_MIN_FREE_BYTES, min_free_ratio=_AUTO_COMPACT_MIN_FREE_RATIO):
+def maybe_compact_db_file(
+        min_free_bytes=_AUTO_COMPACT_MIN_FREE_BYTES,
+        min_free_ratio=_AUTO_COMPACT_MIN_FREE_RATIO):
     """VACUUM otomatis hanya jika ruang kosong internal SQLite sudah signifikan."""
     try:
         stats = get_db_storage_stats()
@@ -437,25 +453,25 @@ def maybe_compact_db_file(min_free_bytes=_AUTO_COMPACT_MIN_FREE_BYTES, min_free_
 
 def reset_all_data():
     """Hapus SEMUA data dari semua tabel (untuk fresh start).
-    
+
     Returns: dict dengan jumlah record yang dihapus per tabel.
     """
     with _get_conn() as conn:
         c = conn.cursor()
-        
+
         c.execute("SELECT COUNT(*) FROM incidents")
         cnt_incidents = c.fetchone()[0]
-        
+
         c.execute("SELECT COUNT(*) FROM metrics")
         cnt_metrics = c.fetchone()[0]
-        
+
         c.execute("SELECT COUNT(*) FROM audit_log")
         cnt_audit = c.fetchone()[0]
-        
+
         c.execute("DELETE FROM incidents")
         c.execute("DELETE FROM metrics")
         c.execute("DELETE FROM audit_log")
-        
+
         conn.commit()
         result = {
             'incidents': cnt_incidents,
@@ -476,28 +492,29 @@ def get_uptime_stats(days=7):
         c = conn.cursor()
         cutoff = datetime.now() - timedelta(days=days)
         cutoff_iso = cutoff.isoformat()
-        
+
         c.execute(
-            """SELECT host, COUNT(*) as cnt, 
+            """SELECT host, COUNT(*) as cnt,
                       SUM(CASE WHEN durasi_detik IS NOT NULL AND durasi_detik >= 0 THEN durasi_detik ELSE 0 END) as total_down
-               FROM incidents 
+               FROM incidents
                WHERE waktu_down >= ?
                GROUP BY host
                ORDER BY total_down DESC""",
             (cutoff_iso,)
         )
         rows = c.fetchall()
-        
+
         if not rows:
             return {}
-        
+
         total_seconds = days * 86400
         stats = {}
         for host, cnt, total_down in rows:
             total_down = total_down or 0
             uptime_sec = max(0, total_seconds - total_down)
-            uptime_pct = (uptime_sec / total_seconds) * 100 if total_seconds > 0 else 100
-            
+            uptime_pct = (uptime_sec / total_seconds) * \
+                100 if total_seconds > 0 else 100
+
             hours = total_down // 3600
             mins = (total_down % 3600) // 60
             secs = total_down % 60
@@ -507,7 +524,7 @@ def get_uptime_stats(days=7):
                 dur_str = f"{mins}m {secs}s"
             else:
                 dur_str = f"{secs}s"
-            
+
             stats[host] = {
                 'uptime_pct': uptime_pct,
                 'incident_count': cnt,
@@ -525,9 +542,10 @@ def record_metric(metric_name, metric_value, metadata=None):
         c = conn.cursor()
         c.execute(
             "INSERT INTO metrics (timestamp, metric_name, metric_value, metadata) VALUES (?, ?, ?, ?)",
-            (datetime.now().isoformat(), metric_name, float(metric_value),
-             json.dumps(metadata) if metadata else None)
-        )
+            (datetime.now().isoformat(),
+             metric_name,
+             float(metric_value),
+                json.dumps(metadata) if metadata else None))
         conn.commit()
 
 
@@ -550,7 +568,8 @@ def get_metrics(metric_name, hours=24, limit=500):
         c = conn.cursor()
         cutoff = (datetime.now() - timedelta(hours=hours)).isoformat()
         # Ambil data TERBARU terlebih dahulu, lalu dibalik agar hasil akhir tetap ASC.
-        # Ini mencegah dataset chart terpotong di data lama saat jumlah row sangat besar.
+        # Ini mencegah dataset chart terpotong di data lama saat jumlah row
+        # sangat besar.
         c.execute(
             "SELECT timestamp, metric_value, metadata FROM metrics "
             "WHERE metric_name = ? AND timestamp >= ? ORDER BY timestamp DESC LIMIT ?",
@@ -611,9 +630,7 @@ def get_audit_log(limit=20, admin_id=None):
         else:
             c.execute(
                 "SELECT timestamp, admin_id, username, command, params, result "
-                "FROM audit_log ORDER BY id DESC LIMIT ?",
-                (limit,)
-            )
+                "FROM audit_log ORDER BY id DESC LIMIT ?", (limit,))
         rows = c.fetchall()
         return [
             {
@@ -628,13 +645,13 @@ def get_audit_log(limit=20, admin_id=None):
 
 def get_report(days=7, tag_filter=None):
     """Generate laporan ringkasan untuk periode tertentu.
-    
+
     Return: dict dengan total_incidents, mttr, hosts, per_tag stats.
     """
     with _get_conn() as conn:
         c = conn.cursor()
         cutoff = (datetime.now() - timedelta(days=days)).isoformat()
-        
+
         if tag_filter:
             # Total incidents
             c.execute(
@@ -656,9 +673,7 @@ def get_report(days=7, tag_filter=None):
                 "SELECT host, COUNT(*) as cnt, "
                 "SUM(CASE WHEN durasi_detik IS NOT NULL AND durasi_detik >= 0 THEN durasi_detik ELSE 0 END) as total_down, "
                 "AVG(CASE WHEN durasi_detik IS NOT NULL AND durasi_detik >= 0 THEN durasi_detik END) as avg_down "
-                "FROM incidents WHERE waktu_down >= ? AND tag = ? GROUP BY host ORDER BY cnt DESC",
-                (cutoff, tag_filter)
-            )
+                "FROM incidents WHERE waktu_down >= ? AND tag = ? GROUP BY host ORDER BY cnt DESC", (cutoff, tag_filter))
             host_rows = c.fetchall()
 
             # Per-tag breakdown
@@ -686,18 +701,14 @@ def get_report(days=7, tag_filter=None):
                 "SELECT host, COUNT(*) as cnt, "
                 "SUM(CASE WHEN durasi_detik IS NOT NULL AND durasi_detik >= 0 THEN durasi_detik ELSE 0 END) as total_down, "
                 "AVG(CASE WHEN durasi_detik IS NOT NULL AND durasi_detik >= 0 THEN durasi_detik END) as avg_down "
-                "FROM incidents WHERE waktu_down >= ? GROUP BY host ORDER BY cnt DESC",
-                (cutoff,)
-            )
+                "FROM incidents WHERE waktu_down >= ? GROUP BY host ORDER BY cnt DESC", (cutoff,))
             host_rows = c.fetchall()
 
             c.execute(
                 "SELECT COALESCE(tag, 'untagged') as t, COUNT(*) FROM incidents "
-                "WHERE waktu_down >= ? GROUP BY t ORDER BY COUNT(*) DESC",
-                (cutoff,)
-            )
+                "WHERE waktu_down >= ? GROUP BY t ORDER BY COUNT(*) DESC", (cutoff,))
             tag_rows = c.fetchall()
-        
+
         # Format
         hosts_data = []
         for h in host_rows:
@@ -706,9 +717,9 @@ def get_report(days=7, tag_filter=None):
                 'total_down_sec': h[2] or 0,
                 'avg_down_sec': round(h[3]) if h[3] else 0
             })
-        
+
         tags_data = [{'tag': t[0], 'count': t[1]} for t in tag_rows]
-        
+
         return {
             'period_days': days,
             'total_incidents': total,
@@ -744,4 +755,5 @@ def _auto_tag(kategori, host):
     return "other"
 
 
-# W4 FIX: _format_duration() dihapus — dead code (duplikat logika yang ada di get_uptime_stats)
+# W4 FIX: _format_duration() dihapus — dead code (duplikat logika yang ada
+# di get_uptime_stats)

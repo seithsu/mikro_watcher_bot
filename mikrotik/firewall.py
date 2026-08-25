@@ -5,7 +5,7 @@
 import logging
 
 from .connection import pool
-from .decorators import with_retry, cached, to_bool, to_int
+from .decorators import with_retry, cached, to_bool
 
 logger = logging.getLogger(__name__)
 
@@ -43,9 +43,8 @@ def get_firewall_rules(chain_type="filter"):
 def toggle_firewall_rule(rule_id: str, chain_type: str = "filter", disabled: bool = True):
     """Enable atau disable firewall rule."""
     api = pool.get_api()
-    api.path('ip', 'firewall', chain_type).update(
-        **{'.id': rule_id, 'disabled': str(disabled).lower()}
-    )
+    cmd = 'disable' if disabled else 'enable'
+    api.path('ip', 'firewall', chain_type)(cmd, **{'.id': rule_id})
     return True
 
 
@@ -93,7 +92,7 @@ def block_ip(ip_address: str, reason: str = "auto-block", list_name: str = "auto
     if existing:
         # IP sudah ada - hanya update komentar, bukan entri baru.
         # Return False agar caller bisa membedakan "baru diblokir" vs "sudah ada".
-        addr_list.update(**{'.id': existing[0].get('.id'), 'comment': reason})
+        addr_list('set', **{'.id': existing[0].get('.id'), 'comment': reason})
         return False
 
     addr_list.add(list=list_name, address=ip_address, comment=reason)

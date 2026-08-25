@@ -18,11 +18,11 @@ _TASK_STARTUP_DELAYS = {
     "system": 0,
     "resources": 1,
     "alert_maintenance": 0,
-    "top_bw": 2,
-    "logs": 4,
-    "traffic": 6,
-    "netwatch": 8,
-    "dhcp_arp": 10,
+    "top_bw": 3,
+    "logs": 5,
+    "traffic": 12,
+    "netwatch": 18,
+    "dhcp_arp": 25,
 }
 
 
@@ -32,7 +32,14 @@ async def _run_task_with_startup_delay(name, task_factory):
     if delay:
         logger.info("[INIT] Menunda start task %s selama %ss untuk meratakan beban startup.", name, delay)
         await asyncio.sleep(delay)
-    await task_factory()
+    try:
+        await task_factory()
+    except asyncio.CancelledError:
+        logger.info("[STOP] Task '%s' dibatalkan (CancelledError).", name)
+        raise
+    except Exception as e:
+        logger.error("[FATAL] Task '%s' crash dengan exception: %s", name, e, exc_info=True)
+
 
 
 async def main_async():

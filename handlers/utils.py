@@ -28,7 +28,7 @@ def with_menu_timestamp(text):
 
 def read_state_json():
     """Baca state.json yang ditulis oleh monitor.py (shared utility).
-    
+
     Return dict {'hosts': {}, 'kategori': '...', 'last_update': '...'}
     """
     import json
@@ -49,9 +49,10 @@ def read_state_json():
         'degraded_reason': '',
     }
 
+
 def get_back_button(back_to=None):
     """Footer navigasi konsisten: ⬅️ Back + 🏠 Home.
-    
+
     back_to: callback_data untuk tombol Back (default: cmd_start / Home).
               Contoh: 'menu_monitor', 'menu_network', dll.
     """
@@ -67,7 +68,7 @@ def get_back_button(back_to=None):
 
 def append_back_button(reply_markup, back_to=None):
     """Tambahkan footer navigasi ke existing keyboard.
-    
+
     back_to: callback_data untuk tombol Back.
     """
     if not reply_markup:
@@ -80,6 +81,7 @@ def append_back_button(reply_markup, back_to=None):
     return InlineKeyboardMarkup(new_keyboard)
 
 # ============ RATE LIMITER ============
+
 
 class RateLimiter:
     """Rate limiter sederhana per-user, per-menit. Thread-safe."""
@@ -141,6 +143,7 @@ def cek_admin(user_id):
 # format_bytes_auto diimpor dari mikrotik.decorators.format_bytes (canonical source)
 # Menghindari duplikasi logika yang identik.
 
+
 def _format_bytes(bytes_val):
     """Alias untuk format_bytes_auto (canonical source: mikrotik.decorators.format_bytes)."""
     return format_bytes_auto(bytes_val)
@@ -201,7 +204,8 @@ def escape_html_attr(value):
 def generic_error_html(prefix=None):
     """Pesan error aman untuk user (tanpa bocor exception internal)."""
     if prefix:
-        return f"❌ <b>{escape_html(prefix)}</b>\nCek log bot untuk detail teknis."
+        return f"❌ <b>{
+            escape_html(prefix)}</b>\nCek log bot untuk detail teknis."
     return _GENERIC_ERROR_TEXT
 
 
@@ -242,6 +246,7 @@ def get_callback_payload(bot_data, namespace, token, ttl_seconds=1800):
     cache_key = f"cb_{namespace}_{token}"
     return get_cache_if_fresh(bot_data, cache_key, ttl_seconds=ttl_seconds)
 
+
 def format_interface_list(interfaces):
     """Format list interface jadi text yang rapi."""
     text = "[NET] DAFTAR INTERFACE\n"
@@ -280,7 +285,7 @@ async def _check_access(update, user, command):
         _rate_limiter._max = int(cfg.RATE_LIMIT_PER_MINUTE)
     except Exception as e:
         logger.debug("reload runtime config gagal: %s", e)
-    
+
     async def send_warning(text):
         if update.message:
             await update.effective_message.reply_text(text)
@@ -293,14 +298,20 @@ async def _check_access(update, user, command):
             "[SEC] Akses ditolak: user_id=%s username=%s command=%s",
             user.id, user.username or "?", command,
         )
-        # Notifikasi admin saat ada user tidak dikenal mencoba akses (1x per user per session)
+        # Notifikasi admin saat ada user tidak dikenal mencoba akses (1x per
+        # user per session)
         if user.id not in _unknown_user_notified:
-            # IMP-7 FIX: Jaga ukuran set agar tidak memory leak saat flood attack
+            # IMP-7 FIX: Jaga ukuran set agar tidak memory leak saat flood
+            # attack
             if len(_unknown_user_notified) >= _UNKNOWN_USER_NOTIFIED_MAX:
                 try:
-                    evict = set(list(_unknown_user_notified)[:_UNKNOWN_USER_NOTIFIED_EVICT])
+                    evict = set(
+                        list(_unknown_user_notified)[
+                            :_UNKNOWN_USER_NOTIFIED_EVICT])
                     _unknown_user_notified.difference_update(evict)
-                    logger.debug("_unknown_user_notified evicted %d entries.", len(evict))
+                    logger.debug(
+                        "_unknown_user_notified evicted %d entries.",
+                        len(evict))
                 except Exception:
                     pass
             _unknown_user_notified.add(user.id)

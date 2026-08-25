@@ -200,7 +200,7 @@ async def cek_disk(info):
                 await kirim_ke_semua_admin(
                     f"[WARN] <b>Disk Penuh!</b>\n\n"
                     f"Disk Usage: <b>{used_pct:.1f}%</b> (threshold: {cfg.DISK_THRESHOLD}%)\n"
-                    f"Free: {free // (1024*1024)} MB\n\n"
+                    f"Free: {free // (1024 * 1024)} MB\n\n"
                     f"Segera bersihkan file backup/log di router!",
                     parse_mode='HTML'
                 )
@@ -266,7 +266,7 @@ async def cek_uptime_anomaly(info):
         m = re.fullmatch(pattern, uptime_text)
         if m and any(part is not None for part in m.groups()):
             w, d, h, mi, s = (int(x) if x else 0 for x in m.groups())
-            total_seconds = w*604800 + d*86400 + h*3600 + mi*60 + s
+            total_seconds = w * 604800 + d * 86400 + h * 3600 + mi * 60 + s
         else:
             logger.debug("cek_uptime_anomaly skip unparseable uptime: %r", uptime_str)
             return
@@ -347,7 +347,7 @@ async def cek_vpn_tunnels():
                 try:
                     await asyncio.to_thread(
                         database.log_incident_down, name,
-                        f"[WARN] VPN DOWN (type: {tinfo.get('type','?')}, remote: {tinfo.get('remote','-')})",
+                        f"[WARN] VPN DOWN (type: {tinfo.get('type', '?')}, remote: {tinfo.get('remote', '-')})",
                         f"VPN tunnel {name} terputus", "vpn"
                     )
                 except Exception as dbe:

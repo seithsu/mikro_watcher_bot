@@ -37,7 +37,6 @@ def get_schedulers():
 def set_scheduler_status(sched_id: str, disabled: bool):
     """Enable atau disable scheduler entry."""
     api = pool.get_api()
-    api.path('system', 'scheduler').update(
-        **{'.id': sched_id, 'disabled': str(disabled).lower()}
-    )
+    cmd = 'disable' if disabled else 'enable'
+    api.path('system', 'scheduler')(cmd, **{'.id': sched_id})
     return True

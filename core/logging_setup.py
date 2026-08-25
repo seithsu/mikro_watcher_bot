@@ -49,11 +49,19 @@ def configure_root_logging(level=logging.INFO):
     Jika env `APP_LOG_FILE` diset, log utama juga ditulis ke file rotasi.
     `APP_LOG_TO_STDOUT=false` dapat dipakai agar stdout PM2 tidak menduplikasi log utama.
     """
-    formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+    formatter = logging.Formatter(
+        "%(asctime)s - %(name)s - %(levelname)s - %(message)s")
     handlers = []
 
     log_file = str(os.getenv("APP_LOG_FILE", "") or "").strip()
-    log_to_stdout = str(os.getenv("APP_LOG_TO_STDOUT", "true")).strip().lower() in ("1", "true", "yes", "on")
+    log_to_stdout = str(
+        os.getenv(
+            "APP_LOG_TO_STDOUT",
+            "true")).strip().lower() in (
+        "1",
+        "true",
+        "yes",
+        "on")
 
     if log_file:
         os.makedirs(os.path.dirname(log_file) or ".", exist_ok=True)

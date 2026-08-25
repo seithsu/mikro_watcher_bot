@@ -17,6 +17,7 @@ from enum import Enum
 from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup
 
 import core.config as cfg
+import core.alert_queue as alert_queue
 from core.runtime_reset_signal import read_runtime_reset_signal
 
 logger = logging.getLogger(__name__)
@@ -522,7 +523,7 @@ async def kirim_ke_semua_admin(pesan, parse_mode=None, severity=AlertSeverity.WA
     delivered = False
     for admin_id in list(_runtime_value("ADMIN_IDS", []) or []):
         try:
-            await bot.send_message(
+            await alert_queue.put_alert(
                 chat_id=admin_id,
                 text=formatted,
                 parse_mode=parse_mode or "HTML",
@@ -596,7 +597,7 @@ async def check_escalation():
 
             for admin_id in target_admins:
                 try:
-                    await bot.send_message(
+                    await alert_queue.put_alert(
                         chat_id=admin_id,
                         text=escalation_msg,
                         parse_mode="HTML",
@@ -646,7 +647,7 @@ async def send_digest():
 
     for admin_id in list(_runtime_value("ADMIN_IDS", []) or []):
         try:
-            await bot.send_message(chat_id=admin_id, text=digest_msg, parse_mode="HTML")
+            await alert_queue.put_alert(chat_id=admin_id, text=digest_msg, parse_mode="HTML")
         except Exception as e:
             logger.warning(f"Gagal kirim digest ke {admin_id}: {e}")
 

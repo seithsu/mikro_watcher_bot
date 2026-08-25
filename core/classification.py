@@ -9,7 +9,10 @@ _YELLOW = "\U0001F7E1"
 _GREEN = "\U0001F7E2"
 
 
-def _collect_extra_service_downs(netwatch_state, tcp_services=None, dns_key=None):
+def _collect_extra_service_downs(
+        netwatch_state,
+        tcp_services=None,
+        dns_key=None):
     """Kumpulkan service-level downs (TCP/DNS) untuk klasifikasi lanjutan."""
     downs = []
 
@@ -50,9 +53,18 @@ def _classify_internal(
     gw_up = netwatch_state.get(gw_wan, True) if gw_wan else True
     inet_up = netwatch_state.get(gw_inet, True) if gw_inet else True
 
-    server_downs = [k for k, v in (servers or {}).items() if not netwatch_state.get(v, True)]
-    critical_downs = [k for k, v in (critical_devices or {}).items() if not netwatch_state.get(v, True)]
-    ap_ups = sum(1 for v in (aps or {}).values() if netwatch_state.get(v, False))
+    server_downs = [
+        k for k, v in (
+            servers or {}).items() if not netwatch_state.get(
+            v, True)]
+    critical_downs = [
+        k for k, v in (
+            critical_devices or {}).items() if not netwatch_state.get(
+            v, True)]
+    ap_ups = sum(
+        1 for v in (
+            aps or {}).values() if netwatch_state.get(
+            v, False))
 
     if not router_up:
         return f"{_RED} CORE DOWN (Router MikroTik tidak terjangkau)" if verbose else f"{_RED} CORE DOWN"

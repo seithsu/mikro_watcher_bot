@@ -10,8 +10,8 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 
 from core.logger import catat
-from .utils import _check_access, get_back_button, append_back_button, escape_html, with_menu_timestamp
-from mikrotik import get_top_queues, get_simple_queues, get_traffic, get_interfaces
+from .utils import _check_access, get_back_button, escape_html, with_menu_timestamp
+from mikrotik import get_top_queues
 from mikrotik.queue import format_rate_bps
 from core import database
 
@@ -32,21 +32,22 @@ def _fmt_dur(seconds):
     return f"{s}s"
 
 
-
 # ============ /report ============
 
 async def cmd_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Perintah /report - Laporan ringkasan downtime & uptime."""
     user = update.effective_user
-    if await _check_access(update, user, "/report"): return
+    if await _check_access(update, user, "/report"):
+        return
 
     # Default: pilih periode
     if update.callback_query:
         await update.callback_query.answer()
         try:
             await update.callback_query.message.edit_text("⏳ <i>Menyiapkan laporan...</i>", parse_mode='HTML')
-        except Exception as e: logger.debug("Non-fatal UI update error: %s", e)
-    
+        except Exception as e:
+            logger.debug("Non-fatal UI update error: %s", e)
+
     keyboard = [
         [
             InlineKeyboardButton("📊 7 Hari", callback_data="report_7"),
@@ -57,7 +58,7 @@ async def cmd_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
             InlineKeyboardButton("📊 90 Hari", callback_data="report_90"),
         ],
     ]
-    
+
     # Tag filter buttons
     keyboard.append([
         InlineKeyboardButton("🏷️ Filter: Server", callback_data="report_7_server"),
@@ -67,17 +68,18 @@ async def cmd_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
         InlineKeyboardButton("🏷️ Filter: WiFi", callback_data="report_7_wifi"),
         InlineKeyboardButton("🏷️ Filter: DNS", callback_data="report_7_dns"),
     ])
-    keyboard.append([InlineKeyboardButton("🔙 Kembali ke Menu Utama", callback_data='cmd_start')])
-    
+    keyboard.append([InlineKeyboardButton(
+        "🔙 Kembali ke Menu Utama", callback_data='cmd_start')])
+
     reply_markup = InlineKeyboardMarkup(keyboard)
-    
+
     pesan = (
         "📊 <b>LAPORAN INSIDEN & UPTIME</b>\n\n"
         "Pilih periode laporan atau gunakan filter tag:\n\n"
         "<i>Tips: Ketik /report 30 untuk langsung 30 hari</i>"
     )
     pesan = with_menu_timestamp(pesan)
-    
+
     # Cek argument langsung
     if context.args:
         try:
@@ -85,12 +87,12 @@ async def cmd_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return await _send_report(update, context, days)
         except ValueError:
             pass
-    
+
     if update.callback_query:
         await update.callback_query.message.edit_text(pesan, parse_mode='HTML', reply_markup=reply_markup)
     else:
         await update.effective_message.reply_text(pesan, parse_mode='HTML', reply_markup=reply_markup)
-    
+
     catat(user.id, user.username, "/report", "berhasil")
 
 
@@ -105,7 +107,8 @@ async def callback_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = query.data  # report_7, report_30, report_7_server, etc.
 
     # FIND-8 FIX: Validasi days dari callback data sebelum cast ke int.
-    # Callback data bisa rusak/dimanipulasi — tangkap ValueError agar tidak crash.
+    # Callback data bisa rusak/dimanipulasi — tangkap ValueError agar tidak
+    # crash.
     try:
         parts = data.replace("report_", "").split("_")
         days = int(parts[0])
@@ -119,7 +122,8 @@ async def callback_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     try:
         await query.message.edit_text(f"⏳ <i>Generating report {days} hari...</i>", parse_mode='HTML')
-    except Exception as e: logger.debug("Non-fatal UI update error: %s", e)
+    except Exception as e:
+        logger.debug("Non-fatal UI update error: %s", e)
     await _send_report(update, context, days, tag_filter)
 
 
@@ -127,7 +131,7 @@ async def _send_report(update, context, days, tag_filter=None):
     """Generate dan kirim laporan."""
     report = await asyncio.to_thread(database.get_report, days, tag_filter)
     uptime = await asyncio.to_thread(database.get_uptime_stats, days)
-    
+
     # Format MTTR
     mttr = report['mttr_seconds']
     if mttr > 3600:
@@ -136,16 +140,16 @@ async def _send_report(update, context, days, tag_filter=None):
         mttr_str = f"{mttr // 60}m {mttr % 60}s"
     else:
         mttr_str = f"{mttr}s"
-    
+
     filter_label = f" (Tag: {tag_filter})" if tag_filter else ""
-    
+
     pesan = (
         f"📊 <b>LAPORAN INSIDEN — {days} HARI TERAKHIR</b>{filter_label}\n"
         f"{'━' * 25}\n\n"
         f"📌 Total Insiden: <b>{report['total_incidents']}x</b>\n"
         f"⏱️ MTTR (Avg Recovery): <b>{mttr_str}</b>\n\n"
     )
-    
+
     # Per-host breakdown
     if report['hosts']:
         pesan += "<b>🏠 PER HOST:</b>\n"
@@ -153,9 +157,10 @@ async def _send_report(update, context, days, tag_filter=None):
             dur = _fmt_dur(h['total_down_sec'])
             avg = _fmt_dur(h['avg_down_sec'])
             host_safe = escape_html(h['host'])
-            pesan += f"  • {host_safe}: {h['count']}x (total: {dur}, avg: {avg})\n"
+            pesan += f"  • {host_safe}: {
+                h['count']}x (total: {dur}, avg: {avg})\n"
         pesan += "\n"
-    
+
     # Tag breakdown
     if report['tags']:
         pesan += "<b>🏷️ PER KATEGORI:</b>\n"
@@ -163,7 +168,7 @@ async def _send_report(update, context, days, tag_filter=None):
             tag_safe = escape_html(t['tag'])
             pesan += f"  • {tag_safe}: {t['count']}x\n"
         pesan += "\n"
-    
+
     # Uptime stats
     if uptime:
         pesan += "<b>📈 UPTIME RANKING:</b>\n"
@@ -171,9 +176,11 @@ async def _send_report(update, context, days, tag_filter=None):
             pct = stats['uptime_pct']
             icon = "🟢" if pct >= 99.9 else "🟡" if pct >= 99 else "🟠" if pct >= 95 else "🔴"
             host_safe = escape_html(host)
-            pesan += f"  {icon} {host_safe}: {pct:.2f}% ({stats['total_downtime_str']} down)\n"
+            pesan += f"  {icon} {host_safe}: {
+                pct:.2f}% ({
+                stats['total_downtime_str']} down)\n"
         pesan += "\n"
-    
+
     # Metrics summary
     try:
         cpu_stats = await asyncio.to_thread(database.get_metrics_summary, 'cpu_usage', days)
@@ -181,9 +188,13 @@ async def _send_report(update, context, days, tag_filter=None):
         if cpu_stats or ram_stats:
             pesan += "<b>📉 RESOURCE TRENDS:</b>\n"
             if cpu_stats:
-                pesan += f"  • CPU: avg {cpu_stats['avg']}% | max {cpu_stats['max']}%\n"
+                pesan += f"  • CPU: avg {
+                    cpu_stats['avg']}% | max {
+                    cpu_stats['max']}%\n"
             if ram_stats:
-                pesan += f"  • RAM: avg {ram_stats['avg']:.1f}% | max {ram_stats['max']:.1f}%\n"
+                pesan += f"  • RAM: avg {
+                    ram_stats['avg']:.1f}% | max {
+                    ram_stats['max']:.1f}%\n"
     except Exception as e:
         logger.debug("Suppressed non-fatal exception: %s", e)
     pesan = with_menu_timestamp(pesan)
@@ -193,9 +204,10 @@ async def _send_report(update, context, days, tag_filter=None):
             InlineKeyboardButton("🏷️ Filter Server", callback_data=f"report_{days}_server"),
             InlineKeyboardButton("🏷️ Filter WAN", callback_data=f"report_{days}_wan"),
         ])
-    keyboard.append([InlineKeyboardButton("🔙 Kembali ke Menu Utama", callback_data='cmd_start')])
+    keyboard.append([InlineKeyboardButton(
+        "🔙 Kembali ke Menu Utama", callback_data='cmd_start')])
     reply_markup = InlineKeyboardMarkup(keyboard)
-    
+
     if update.callback_query:
         try:
             await update.callback_query.message.edit_text(pesan, parse_mode='HTML', reply_markup=reply_markup)
@@ -210,17 +222,19 @@ async def _send_report(update, context, days, tag_filter=None):
 async def cmd_bandwidth(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Perintah /bandwidth - Top bandwidth users dari Simple Queues."""
     user = update.effective_user
-    if await _check_access(update, user, "/bandwidth"): return
-    
+    if await _check_access(update, user, "/bandwidth"):
+        return
+
     if update.callback_query:
         await update.callback_query.answer()
         try:
             await update.callback_query.message.edit_text("⏳ <i>Mengambil data bandwidth...</i>", parse_mode='HTML')
-        except Exception as e: logger.debug("Non-fatal UI update error: %s", e)
-    
+        except Exception as e:
+            logger.debug("Non-fatal UI update error: %s", e)
+
     try:
         top = await asyncio.to_thread(get_top_queues, 15)
-        
+
         if not top:
             pesan = "ℹ️ <i>Tidak ada traffic aktif saat ini.</i>"
             if update.callback_query:
@@ -228,13 +242,13 @@ async def cmd_bandwidth(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else:
                 await update.effective_message.reply_text(pesan, parse_mode='HTML', reply_markup=get_back_button())
             return
-        
+
         pesan = "📊 <b>TOP BANDWIDTH USAGE</b>\n"
         pesan += f"{'━' * 25}\n\n"
-        
+
         total_rx = 0
         total_tx = 0
-        
+
         for i, q in enumerate(top, 1):
             medal = "🥇" if i == 1 else "🥈" if i == 2 else "🥉" if i == 3 else f"{i}."
             qname = escape_html(q['name'])
@@ -245,31 +259,33 @@ async def cmd_bandwidth(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             total_rx += q['rx_rate']
             total_tx += q['tx_rate']
-        
+
         pesan += f"{'━' * 25}\n"
-        pesan += f"📶 Total aktif: ↓ {format_rate_bps(total_rx)} | ↑ {format_rate_bps(total_tx)}"
+        pesan += f"📶 Total aktif: ↓ {
+            format_rate_bps(total_rx)} | ↑ {
+            format_rate_bps(total_tx)}"
         pesan = with_menu_timestamp(pesan)
-        
+
         keyboard = [
             [InlineKeyboardButton("🔄 Refresh", callback_data="cmd_bandwidth")],
             [InlineKeyboardButton("🔙 Kembali ke Menu Utama", callback_data='cmd_start')]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
-        
+
         if update.callback_query:
             await update.callback_query.message.edit_text(pesan, parse_mode='HTML', reply_markup=reply_markup)
         else:
             await update.effective_message.reply_text(pesan, parse_mode='HTML', reply_markup=reply_markup)
-        
+
         catat(user.id, user.username, "/bandwidth", "berhasil")
-        
+
     except Exception as e:
         logger.error(f"Bandwidth error: {e}")
-        pesan = f"❌ Error mengambil data bandwidth:\n<code>{escape_html(str(e)[:200])}</code>"
+        pesan = f"❌ Error mengambil data bandwidth:\n<code>{
+            escape_html(
+                str(e)[
+                    :200])}</code>"
         if update.callback_query:
             await update.callback_query.message.edit_text(pesan, parse_mode='HTML', reply_markup=get_back_button())
         else:
             await update.effective_message.reply_text(pesan, parse_mode='HTML', reply_markup=get_back_button())
-
-
-

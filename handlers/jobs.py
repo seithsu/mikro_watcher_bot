@@ -13,12 +13,20 @@ from telegram.ext import ContextTypes
 
 import core.config as cfg
 from mikrotik import (
-    get_status, get_interfaces, get_dhcp_usage_count, get_dhcp_pool_capacity,
-    get_monitored_aps, get_monitored_servers, get_monitored_critical_devices, get_active_critical_device_names,
+    get_status,
+    get_interfaces,
+    get_dhcp_usage_count,
+    get_dhcp_pool_capacity,
+    get_monitored_aps,
+    get_monitored_servers,
+    get_monitored_critical_devices,
+    get_active_critical_device_names,
     get_default_gateway,
-    export_router_backup, export_router_backup_ftp,
+    export_router_backup,
+    export_router_backup_ftp,
 )
-from handlers.utils import read_state_json, format_voltage  # FIND-26 FIX: import format_voltage
+# FIND-26 FIX: import format_voltage
+from handlers.utils import read_state_json, format_voltage
 from core import database
 
 logger = logging.getLogger(__name__)
@@ -37,12 +45,14 @@ async def daily_report(context: ContextTypes.DEFAULT_TYPE):
 
         total_ram = int(info['ram_total'])
         free_ram = int(info['ram_free'])
-        ram_pct = ((total_ram - free_ram) / total_ram) * 100 if total_ram > 0 else 0
-        ram_free_mb = free_ram / (1024*1024)
+        ram_pct = ((total_ram - free_ram) / total_ram) * \
+            100 if total_ram > 0 else 0
+        ram_free_mb = free_ram / (1024 * 1024)
 
         total_disk = int(info['disk_total'])
         free_disk = int(info['disk_free'])
-        disk_pct = ((total_disk - free_disk) / total_disk) * 100 if total_disk > 0 else 0
+        disk_pct = ((total_disk - free_disk) / total_disk) * \
+            100 if total_disk > 0 else 0
 
         # Hitung DHCP
         try:
@@ -61,10 +71,8 @@ async def daily_report(context: ContextTypes.DEFAULT_TYPE):
                 asyncio.to_thread(get_monitored_servers),
                 asyncio.to_thread(get_monitored_critical_devices),
             )
-            down_ifaces = [
-                iface['name'] for iface in interfaces
-                if iface['enabled'] and not iface['running'] and iface['name'] not in cfg.MONITOR_IGNORE_IFACE
-            ]
+            down_ifaces = [iface['name'] for iface in interfaces if iface['enabled']
+                           and not iface['running'] and iface['name'] not in cfg.MONITOR_IGNORE_IFACE]
             try:
                 current_gw_wan = await asyncio.to_thread(get_default_gateway)
             except Exception:
@@ -85,8 +93,10 @@ async def daily_report(context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             today_incidents = 0
 
-        effective_dhcp_pool_size = int(dhcp_pool_size or cfg.DHCP_POOL_SIZE or 0)
-        pool_pct = (dhcp_count / effective_dhcp_pool_size) * 100 if effective_dhcp_pool_size > 0 else 0
+        effective_dhcp_pool_size = int(
+            dhcp_pool_size or cfg.DHCP_POOL_SIZE or 0)
+        pool_pct = (dhcp_count / effective_dhcp_pool_size) * \
+            100 if effective_dhcp_pool_size > 0 else 0
 
         # Load state.json via shared utility
         try:
@@ -100,15 +110,18 @@ async def daily_report(context: ContextTypes.DEFAULT_TYPE):
         def up_icon(h): return "\u2705" if hosts.get(h, False) else "\u274c"
 
         # Interface detail
-        indibiz = next((i for i in interfaces if 'indibiz' in i['name'].lower() or 'ether1' in i['name'].lower()), None)
-        local = next((i for i in interfaces if 'local' in i['name'].lower() or 'ether2' in i['name'].lower()), None)
+        indibiz = next((i for i in interfaces if 'indibiz' in i['name'].lower(
+        ) or 'ether1' in i['name'].lower()), None)
+        local = next((i for i in interfaces if 'local' in i['name'].lower(
+        ) or 'ether2' in i['name'].lower()), None)
 
         # Device identity (MAC-based)
         identity_line = ""
         try:
             from mikrotik.identity import get_router_identity_label, format_identity_line
             # FIND-20 FIX: Gunakan asyncio.to_thread agar konsisten dengan cmd_status di general.py.
-            # get_router_identity_label() bisa melakukan blocking API call saat cache stale.
+            # get_router_identity_label() bisa melakukan blocking API call saat
+            # cache stale.
             dev_identity = await asyncio.to_thread(get_router_identity_label)
             id_line = format_identity_line(dev_identity)
             if id_line:
@@ -125,14 +138,18 @@ async def daily_report(context: ContextTypes.DEFAULT_TYPE):
 
         # Network Matrix
         pesan += f"- Router ({cfg.MIKROTIK_IP}): {up_icon(cfg.MIKROTIK_IP)}\n"
-        if current_gw_wan: pesan += f"- WAN Gateway ({current_gw_wan}): {up_icon(current_gw_wan)}\n"
-        if cfg.GW_INET: pesan += f"- Internet ({cfg.GW_INET}): {up_icon(cfg.GW_INET)}\n"
+        if current_gw_wan:
+            pesan += f"- WAN Gateway ({current_gw_wan}): {
+                up_icon(current_gw_wan)}\n"
+        if cfg.GW_INET:
+            pesan += f"- Internet ({cfg.GW_INET}): {up_icon(cfg.GW_INET)}\n"
         for k, v in current_servers.items():
             pesan += f"- {k} ({v}): {up_icon(v)}\n"
         for k, v in current_critical.items():
             pesan += f"- [Penting] {k} ({v}): {up_icon(v)}\n"
         active_critical_names = await asyncio.to_thread(get_active_critical_device_names)
-        unresolved_critical = [n for n in active_critical_names if n not in current_critical]
+        unresolved_critical = [
+            n for n in active_critical_names if n not in current_critical]
         for name in unresolved_critical:
             pesan += f"- [Penting] {name}: ⚪ Unknown (hostname DHCP belum ditemukan)\n"
 
@@ -154,15 +171,19 @@ async def daily_report(context: ContextTypes.DEFAULT_TYPE):
 
         # Format CPU info
         cpu_info = f"{info['cpu']}%"
-        if info.get('cpu_freq'): cpu_info += f" @ {info['cpu_freq']}MHz"
-        if info.get('cpu_count', 1) > 1: cpu_info += f" ({info['cpu_count']} cores)"
-        
+        if info.get('cpu_freq'):
+            cpu_info += f" @ {info['cpu_freq']}MHz"
+        if info.get('cpu_count', 1) > 1:
+            cpu_info += f" ({info['cpu_count']} cores)"
+
         # Format Sensors
         sensors_str = ""
         sensors = []
-        if info.get('cpu_temp'): sensors.append(f"🌡️ {info['cpu_temp']}°C")
+        if info.get('cpu_temp'):
+            sensors.append(f"🌡️ {info['cpu_temp']}°C")
         if info.get('voltage'):
-            v_str = format_voltage(info['voltage'])  # FIND-26 FIX: gunakan shared helper
+            # FIND-26 FIX: gunakan shared helper
+            v_str = format_voltage(info['voltage'])
             if v_str:
                 sensors.append(f"⚡ {v_str}")
         if sensors:
@@ -178,13 +199,31 @@ async def daily_report(context: ContextTypes.DEFAULT_TYPE):
         )
 
         # Interface Health
-        pesan += f"\n<b>\U0001f50c INTERFACE HEALTH</b>\n"
+        pesan += "\n<b>\U0001f50c INTERFACE HEALTH</b>\n"
         if indibiz:
             irun = "🟢 UP" if indibiz['running'] else "🔴 DOWN"
-            pesan += f"- INDIBIZ: {irun} | link-downs: {indibiz.get('link_downs', 0)} | errors rx/tx: {indibiz.get('rx_error', 0)}/{indibiz.get('tx_error', 0)}\n"
+            pesan += f"- INDIBIZ: {irun} | link-downs: {
+                indibiz.get(
+                    'link_downs',
+                    0)} | errors rx/tx: {
+                indibiz.get(
+                    'rx_error',
+                    0)}/{
+                indibiz.get(
+                    'tx_error',
+                    0)}\n"
         if local:
             lrun = "🟢 UP" if local['running'] else "🔴 DOWN"
-            pesan += f"- LOCAL: {lrun} | link-downs: {local.get('link_downs', 0)} | errors rx/tx: {local.get('rx_error', 0)}/{local.get('tx_error', 0)}\n"
+            pesan += f"- LOCAL: {lrun} | link-downs: {
+                local.get(
+                    'link_downs',
+                    0)} | errors rx/tx: {
+                local.get(
+                    'rx_error',
+                    0)}/{
+                local.get(
+                    'tx_error',
+                    0)}\n"
 
         pesan += (
             f"\n<b>\U0001f310 KAPASITAS JARINGAN</b>\n"
@@ -223,7 +262,8 @@ async def auto_backup(context: ContextTypes.DEFAULT_TYPE):
         try:
             filename = await asyncio.to_thread(export_router_backup, "export")
         except Exception as e:
-            logger.debug("Auto backup API export gagal, fallback FTP/FTPS: %s", e)
+            logger.debug(
+                "Auto backup API export gagal, fallback FTP/FTPS: %s", e)
             filename = None
 
         if not filename:
@@ -232,17 +272,19 @@ async def auto_backup(context: ContextTypes.DEFAULT_TYPE):
             except Exception as e:
                 logger.debug("Auto backup FTP/FTPS export gagal: %s", e)
         if filename:
-            pesan = f"🗓️ [AUTO-BACKUP]\nBackup Rutin Mingguan Config Router\nBerhasil tersimpan."
+            pesan = "🗓️ [AUTO-BACKUP]\nBackup Rutin Mingguan Config Router\nBerhasil tersimpan."
             for admin_id in cfg.ADMIN_IDS:
                 try:
                     with open(filename, 'rb') as f:
                         await context.bot.send_document(
                             chat_id=admin_id, document=f,
-                            filename=os.path.basename(filename),  # BUG-3 FIX: basename saja
+                            # BUG-3 FIX: basename saja
+                            filename=os.path.basename(filename),
                             caption=pesan
                         )
                 except Exception as e:
-                    logger.warning("Gagal kirim auto-backup ke admin %s: %s", admin_id, e)
+                    logger.warning(
+                        "Gagal kirim auto-backup ke admin %s: %s", admin_id, e)
             # Cleanup: hapus file backup lokal setelah terkirim ke semua admin
             try:
                 os.remove(filename)
