@@ -6,6 +6,7 @@ import pytest
 import monitor as mon
 import monitor.netwatch as netwatch
 import monitor.tasks as tasks
+import core.alert_queue as alert_queue_mod
 
 
 @pytest.mark.asyncio
@@ -16,6 +17,9 @@ async def test_main_async_runs_all_tasks_once(monkeypatch):
     async def _tick():
         called["count"] += 1
 
+    async def _tick_bot(_bot):
+        called["count"] += 1
+
     monkeypatch.setattr(tasks, "task_monitor_system", _tick)
     monkeypatch.setattr(tasks, "task_monitor_resources", _tick)
     monkeypatch.setattr(tasks, "task_monitor_traffic", _tick)
@@ -24,6 +28,9 @@ async def test_main_async_runs_all_tasks_once(monkeypatch):
     monkeypatch.setattr(tasks, "task_monitor_dhcp_arp", _tick)
     monkeypatch.setattr(tasks, "task_monitor_alert_maintenance", _tick)
     monkeypatch.setattr(netwatch, "task_monitor_netwatch", _tick)
+    # alert_worker kini bagian dari task yang di-gather (dipanggil dgn arg bot);
+    # mock jadi finite biar gather selesai (tanpa ini main_async tak pernah return).
+    monkeypatch.setattr(alert_queue_mod, "alert_worker", _tick_bot)
     monkeypatch.setattr(mon, "_TASK_STARTUP_DELAYS", {k: 0 for k in mon._TASK_STARTUP_DELAYS})
 
     fake_signal_loop = SimpleNamespace(
@@ -35,7 +42,7 @@ async def test_main_async_runs_all_tasks_once(monkeypatch):
     monkeypatch.setattr(mon.asyncio, "get_event_loop", lambda: fake_signal_loop)
 
     await mon.main_async()
-    assert called["count"] == 8
+    assert called["count"] == 9
     exception = RuntimeError("loop-fail")
     exception_handler["handler"](None, {"message": "boom", "exception": exception})
 
@@ -80,6 +87,9 @@ async def test_main_async_windows_signal_fallback_and_cancel(monkeypatch):
     async def _tick():
         called["count"] += 1
 
+    async def _tick_bot(_bot):
+        called["count"] += 1
+
     monkeypatch.setattr(tasks, "task_monitor_system", _tick)
     monkeypatch.setattr(tasks, "task_monitor_resources", _tick)
     monkeypatch.setattr(tasks, "task_monitor_traffic", _tick)
@@ -88,6 +98,7 @@ async def test_main_async_windows_signal_fallback_and_cancel(monkeypatch):
     monkeypatch.setattr(tasks, "task_monitor_dhcp_arp", _tick)
     monkeypatch.setattr(tasks, "task_monitor_alert_maintenance", _tick)
     monkeypatch.setattr(netwatch, "task_monitor_netwatch", _tick)
+    monkeypatch.setattr(alert_queue_mod, "alert_worker", _tick_bot)
     monkeypatch.setattr(mon, "_TASK_STARTUP_DELAYS", {k: 0 for k in mon._TASK_STARTUP_DELAYS})
 
     fake_signal_loop = SimpleNamespace(add_signal_handler=lambda *a, **k: (_ for _ in ()).throw(NotImplementedError()))
@@ -111,12 +122,15 @@ async def test_main_async_windows_signal_fallback_and_cancel(monkeypatch):
     await mon.main_async()
 
     assert len(fallback_handlers) == 2
-    assert called["count"] == 8
+    assert called["count"] == 9
 
 
 @pytest.mark.asyncio
 async def test_main_async_handles_cancelled_gather(monkeypatch):
     async def _tick():
+        return None
+
+    async def _noop_bot(_bot):
         return None
 
     monkeypatch.setattr(tasks, "task_monitor_system", _tick)
@@ -127,6 +141,7 @@ async def test_main_async_handles_cancelled_gather(monkeypatch):
     monkeypatch.setattr(tasks, "task_monitor_dhcp_arp", _tick)
     monkeypatch.setattr(tasks, "task_monitor_alert_maintenance", _tick)
     monkeypatch.setattr(netwatch, "task_monitor_netwatch", _tick)
+    monkeypatch.setattr(alert_queue_mod, "alert_worker", _noop_bot)
     monkeypatch.setattr(mon, "_TASK_STARTUP_DELAYS", {k: 0 for k in mon._TASK_STARTUP_DELAYS})
 
     fake_signal_loop = SimpleNamespace(add_signal_handler=lambda *a, **k: None)

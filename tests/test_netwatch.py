@@ -104,11 +104,12 @@ def test_host_fail_threshold_prefers_override(monkeypatch):
 
 
 def test_netwatch_compute_sleep_with_jitter_adds_positive_jitter(monkeypatch):
-    import monitor.netwatch as nw
+    # Helper jitter pindah ke monitor/utils (single source of truth).
+    import monitor.utils as u
 
-    monkeypatch.setattr(nw.random, "uniform", lambda a, b: 1.25)
+    monkeypatch.setattr(u.random, "uniform", lambda a, b: 1.25)
 
-    assert nw._compute_sleep_with_jitter(10, jitter_ratio=0.2, max_jitter=3.0) == 11.25
+    assert u.compute_sleep_with_jitter(10, jitter_ratio=0.2, max_jitter=3.0) == 11.25
 
 
 @pytest.mark.asyncio

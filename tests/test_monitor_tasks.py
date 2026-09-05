@@ -82,11 +82,13 @@ class TestTaskMonitorLogs:
 
 
 def test_compute_sleep_with_jitter_adds_positive_jitter(monkeypatch):
-    import monitor.tasks as t
+    # Helper jitter pindah ke monitor/utils (single source of truth);
+    # test lama masih menunjuk ke monitor.tasks yang sudah tidak punya fungsi ini.
+    import monitor.utils as u
 
-    monkeypatch.setattr(t.random, "uniform", lambda a, b: 1.5)
+    monkeypatch.setattr(u.random, "uniform", lambda a, b: 1.5)
 
-    assert t._compute_sleep_with_jitter(10, jitter_ratio=0.2, max_jitter=3.0) == 11.5
+    assert u.compute_sleep_with_jitter(10, jitter_ratio=0.2, max_jitter=3.0) == 11.5
 
     @pytest.mark.asyncio
     async def test_get_interfaces_snapshot_uses_last_good_cache(self, monkeypatch):
@@ -531,7 +533,8 @@ class TestTopBandwidthHelpers:
         assert t._queue_rate_to_mbps(0) == 0.0
         assert round(t._queue_rate_to_mbps(40_300_000), 1) == 40.3
 
-    def test_normalize_top_bw_candidates_filters_and_sorts(self, monkeypatch):
+    @pytest.mark.asyncio
+    async def test_normalize_top_bw_candidates_filters_and_sorts(self, monkeypatch):
         import monitor.tasks as t
 
         monkeypatch.setattr(t.cfg, "TRAFFIC_LEAK_WHITELIST", ["PC-WHITELIST"])
@@ -539,7 +542,8 @@ class TestTopBandwidthHelpers:
         monkeypatch.setattr(t.cfg, "TOP_BW_ALERT_MIN_TX_MBPS", 10)
         monkeypatch.setattr(t.cfg, "TOP_BW_ALERT_IGNORE_QUEUES", ["TOTAL-BANDWIDTH"], raising=False)
 
-        result = t._normalize_top_bw_candidates([
+        # _normalize_top_bw_candidates sekarang async (ada ARP lookup di dalamnya).
+        result = await t._normalize_top_bw_candidates([
             {"name": "", "rx_rate": 100_000_000, "tx_rate": 0},
             {"name": "PC-WHITELIST", "rx_rate": 100_000_000, "tx_rate": 0},
             {"name": "TOTAL-BANDWIDTH", "target": "192.168.3.0/24", "rx_rate": 100_000_000, "tx_rate": 0},
@@ -1278,9 +1282,9 @@ class TestMonitorTaskLoops:
         monkeypatch.setattr(t, "get_mikrotik_log", fake_get_log)
         monkeypatch.setattr(t, "block_ip", MagicMock())
         monkeypatch.setattr(t.database, "audit_log", MagicMock())
-        bot_mock = MagicMock()
-        bot_mock.send_message = AsyncMock()
-        monkeypatch.setattr(t, "bot", bot_mock)
+        # Sejak alert queue di-decouple, notifikasi auto-block lewat kirim_operasional.
+        ops_mock = AsyncMock()
+        monkeypatch.setattr(t, "kirim_operasional", ops_mock)
 
         async def fake_with_timeout(coro, timeout=15, default=None, **kwargs):
             try:
@@ -1298,7 +1302,8 @@ class TestMonitorTaskLoops:
             await t.task_monitor_logs()
 
         t.block_ip.assert_called_once_with("192.168.3.99", "Auto Blocked by Bot (Bruteforce)")
-        bot_mock.send_message.assert_awaited()
+        ops_mock.assert_awaited()
+        assert "192.168.3.99" in ops_mock.await_args_list[0].args[0]
 
     @pytest.mark.asyncio
     async def test_task_monitor_logs_sends_power_event_once(self, monkeypatch):
@@ -1510,9 +1515,9 @@ class TestMonitorTaskLoops:
 
         monkeypatch.setattr(t, "get_mikrotik_log", fake_get_log)
 
-        bot_mock = MagicMock()
-        bot_mock.send_message = AsyncMock()
-        monkeypatch.setattr(t, "bot", bot_mock)
+        # Forward log router sekarang lewat kirim_operasional (gate/mute aware).
+        ops_mock = AsyncMock()
+        monkeypatch.setattr(t, "kirim_operasional", ops_mock)
 
         async def fake_with_timeout(coro, timeout=15, default=None, **kwargs):
             try:
@@ -1529,7 +1534,10 @@ class TestMonitorTaskLoops:
         with pytest.raises(asyncio.CancelledError):
             await t.task_monitor_logs()
 
-        bot_mock.send_message.assert_awaited()
+        ops_mock.assert_awaited()
+        # Siklus pertama bisa ikut forward baseline (seen-set masih kosong);
+        # yang penting log error baru benar-benar diteruskan.
+        assert any("disk error" in c.args[0] for c in ops_mock.await_args_list)
 
     @pytest.mark.asyncio
     async def test_task_monitor_logs_forwards_queue_change_info_log(self, monkeypatch):
@@ -1559,9 +1567,8 @@ class TestMonitorTaskLoops:
 
         monkeypatch.setattr(t, "get_mikrotik_log", fake_get_log)
 
-        bot_mock = MagicMock()
-        bot_mock.send_message = AsyncMock()
-        monkeypatch.setattr(t, "bot", bot_mock)
+        ops_mock = AsyncMock()
+        monkeypatch.setattr(t, "kirim_operasional", ops_mock)
 
         async def fake_with_timeout(coro, timeout=15, default=None, **kwargs):
             try:
@@ -1578,7 +1585,8 @@ class TestMonitorTaskLoops:
         with pytest.raises(asyncio.CancelledError):
             await t.task_monitor_logs()
 
-        bot_mock.send_message.assert_awaited()
+        ops_mock.assert_awaited()
+        assert any("FARMASI IGD" in c.args[0] for c in ops_mock.await_args_list)
 
     @pytest.mark.asyncio
     async def test_task_monitor_logs_skips_generic_queue_info_log(self, monkeypatch):
@@ -1677,3 +1685,138 @@ class TestMonitorTaskLoops:
             await t.task_monitor_logs()
 
         bot_mock.send_message.assert_not_awaited()
+
+
+class TestAutoActionRx:
+    """Guard jalur bot + restore loop untuk auto-action RX anomaly.
+
+    Latar belakang bug: bot disable ether3 saat anomali RX, tapi ether3 adalah
+    jalur koneksi bot sendiri ke router. Disable memutus API bot -> enable
+    gagal -> port nyangkut off sampai operator manual. Dua lapis proteksi:
+    1) guard: jangan disable port jalur bot;
+    2) restore loop: enable di-retry sampai sukses, survive restart.
+    """
+
+    def test_should_skip_auto_action_logic(self):
+        import monitor.tasks as t
+
+        # Proteksi mati -> boleh disable.
+        assert t._should_skip_auto_action("ether3", "ether3", protect=False) is False
+        # Jalur bot tidak diketahui -> fail-safe, jangan disable.
+        assert t._should_skip_auto_action("ether3", None, protect=True) is True
+        # Port target == jalur bot -> diblokir.
+        assert t._should_skip_auto_action("ether3", "ether3", protect=True) is True
+        assert t._should_skip_auto_action("ether3", "ETHER3", protect=True) is True
+        # Port target != jalur bot -> boleh disable.
+        assert t._should_skip_auto_action("ether3", "ether5", protect=True) is False
+
+    @pytest.mark.asyncio
+    async def test_is_auto_action_blocked_gate_off_without_bot_ip(self, monkeypatch):
+        import monitor.tasks as t
+
+        # BOT_IP kosong atau proteksi mati -> guard tidak memanggil resolver.
+        # get_mac_learned_interface adalah fungsi sync (dipanggil via to_thread).
+        resolver = MagicMock(return_value="ether5")
+        monkeypatch.setattr(t, "get_mac_learned_interface", resolver)
+        monkeypatch.setattr(t.cfg, "BOT_IP", "", raising=False)
+        monkeypatch.setattr(t.cfg, "RX_ANOMALY_AUTO_ACTION_PROTECT_BOT_LINK", True, raising=False)
+        assert await t._is_auto_action_blocked("ether3") is False
+        resolver.assert_not_called()
+
+        monkeypatch.setattr(t.cfg, "BOT_IP", "192.168.1.10", raising=False)
+        monkeypatch.setattr(t.cfg, "RX_ANOMALY_AUTO_ACTION_PROTECT_BOT_LINK", False, raising=False)
+        assert await t._is_auto_action_blocked("ether3") is False
+        resolver.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_is_auto_action_blocked_matches_bot_link(self, monkeypatch):
+        import monitor.tasks as t
+
+        monkeypatch.setattr(t.cfg, "BOT_IP", "192.168.1.10", raising=False)
+        monkeypatch.setattr(t.cfg, "RX_ANOMALY_AUTO_ACTION_PROTECT_BOT_LINK", True, raising=False)
+        monkeypatch.setattr(t, "get_mac_learned_interface", lambda ip: "ether3")
+        ops = AsyncMock()
+        monkeypatch.setattr(t, "kirim_operasional", ops)
+
+        # Port target = jalur bot -> diblokir dan operator diberi tahu.
+        assert await t._is_auto_action_blocked("ether3") is True
+        assert ops.await_count >= 1
+
+        # Port target berbeda dari jalur bot -> boleh disable.
+        monkeypatch.setattr(t, "get_mac_learned_interface", lambda ip: "ether5")
+        assert await t._is_auto_action_blocked("ether3") is False
+
+    @pytest.mark.asyncio
+    async def test_auto_toggle_blocked_when_iface_is_bot_link(self, monkeypatch):
+        import monitor.tasks as t
+
+        # Guard memblokir disable karena ether3 = jalur bot.
+        monkeypatch.setattr(t, "_is_auto_action_blocked", AsyncMock(return_value=True))
+        disable_bridge = AsyncMock(return_value=True)
+        disable_iface = AsyncMock(return_value=True)
+        monkeypatch.setattr(t, "set_bridge_port_status", disable_bridge)
+        monkeypatch.setattr(t, "set_interface_status", disable_iface)
+        monkeypatch.setattr(t, "kirim_operasional", AsyncMock())
+        monkeypatch.setattr(t, "_mark_auto_action_off", lambda ifname: None)
+
+        await t._auto_toggle_and_restore("ether3", 1)
+
+        disable_bridge.assert_not_awaited()
+        disable_iface.assert_not_awaited()
+        assert "ether3" not in t._AUTO_ACTION_INFLIGHT
+
+    @pytest.mark.asyncio
+    async def test_auto_toggle_disables_then_restores(self, monkeypatch):
+        import monitor.tasks as t
+
+        monkeypatch.setattr(t, "_is_auto_action_blocked", AsyncMock(return_value=False))
+        # set_bridge_port_status adalah fungsi sync (dipanggil via asyncio.to_thread),
+        # jadi mock-nya MagicMock biasa, bukan AsyncMock.
+        disable_bridge = MagicMock(return_value=True)
+        monkeypatch.setattr(t, "set_bridge_port_status", disable_bridge)
+        # _restore_auto_disabled_iface memakai _try_enable_iface; mock langsung sukses.
+        monkeypatch.setattr(t, "_try_enable_iface", AsyncMock(return_value=True))
+        monkeypatch.setattr(t, "kirim_operasional", AsyncMock())
+        monkeypatch.setattr(t, "_mark_auto_action_off", lambda ifname: None)
+        monkeypatch.setattr(t, "_clear_auto_action_off", lambda ifname: None)
+        sleeps = []
+        real_sleep = asyncio.sleep
+
+        async def fake_sleep(sec):
+            sleeps.append(sec)
+            await real_sleep(0)  # jangan benar-benar menunggu
+
+        monkeypatch.setattr(t.asyncio, "sleep", fake_sleep)
+
+        await t._auto_toggle_and_restore("ether3", 1)
+
+        # Disable via bridge port dipanggil dengan disabled=True.
+        disable_bridge.assert_called_once_with("ether3", True)
+        assert sleeps, "harus ada sleep periode off"
+        assert "ether3" not in t._AUTO_ACTION_INFLIGHT
+
+    @pytest.mark.asyncio
+    async def test_restore_retries_until_success(self, monkeypatch):
+        import monitor.tasks as t
+
+        # Percobaan pertama gagal, kedua sukses -> restore berhenti.
+        attempts = {"n": 0}
+
+        async def flaky_enable(ifname):
+            attempts["n"] += 1
+            return attempts["n"] >= 2
+
+        monkeypatch.setattr(t, "_try_enable_iface", flaky_enable)
+        monkeypatch.setattr(t, "kirim_operasional", AsyncMock())
+        monkeypatch.setattr(t, "_clear_auto_action_off", lambda ifname: None)
+        real_sleep = asyncio.sleep
+
+        async def fake_sleep(sec):
+            await real_sleep(0)
+
+        monkeypatch.setattr(t.asyncio, "sleep", fake_sleep)
+
+        ok = await t._restore_auto_disabled_iface("ether3")
+        assert ok is True
+        assert attempts["n"] == 2
+        assert "ether3" not in t._AUTO_ACTION_INFLIGHT

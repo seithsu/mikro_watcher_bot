@@ -352,10 +352,9 @@ class TestCheckEscalation:
         assert _pending_acks["maxed"]["escalated"] == 3
 
     @pytest.mark.asyncio
-    @patch("monitor.alerts.bot")
-    async def test_escalation_hydrates_file_and_targets_single_admin(self, mock_bot, monkeypatch):
+    @patch("monitor.alerts.alert_queue.put_alert", new_callable=AsyncMock)
+    async def test_escalation_hydrates_file_and_targets_single_admin(self, mock_put, monkeypatch):
         from monitor import alerts
-        mock_bot.send_message = AsyncMock()
         monkeypatch.setattr(alerts, "ADMIN_IDS", [1, 2, 3], raising=False)
         monkeypatch.setattr(alerts, "_load_pending_acks_from_file", lambda: {
             "old": {"message": "Down", "severity": "CRITICAL", "time": time.time() - 3600, "escalated": 0}
@@ -364,7 +363,7 @@ class TestCheckEscalation:
         alerts._pending_acks.clear()
         await alerts.check_escalation()
         assert alerts._pending_acks["old"]["escalated"] == 1
-        assert mock_bot.send_message.await_args.kwargs["chat_id"] == 1
+        assert mock_put.await_args.kwargs["chat_id"] == 1
 
     @pytest.mark.asyncio
     @patch("monitor.alerts.bot")
@@ -388,10 +387,9 @@ class TestDeliveryAndDigest:
         alerts._acknowledged.clear()
 
     @pytest.mark.asyncio
-    @patch("monitor.alerts.bot")
-    async def test_send_warning_suppressed_in_digest_mode(self, mock_bot, monkeypatch):
+    @patch("monitor.alerts.alert_queue.put_alert", new_callable=AsyncMock)
+    async def test_send_warning_suppressed_in_digest_mode(self, mock_put, monkeypatch):
         from monitor import alerts
-        mock_bot.send_message = AsyncMock()
         monkeypatch.setattr(alerts, "ALERT_DIGEST_THRESHOLD", 1, raising=False)
         monkeypatch.setattr(alerts, "ALERT_DIGEST_WINDOW", 300, raising=False)
         monkeypatch.setattr(alerts, "is_alert_delivery_enabled", lambda: True)
@@ -401,13 +399,12 @@ class TestDeliveryAndDigest:
         monkeypatch.setattr(alerts.asyncio, "to_thread", fake_to_thread)
         await alerts.kirim_ke_semua_admin("warn-1", severity=alerts.AlertSeverity.WARNING)
         await alerts.kirim_ke_semua_admin("warn-2", severity=alerts.AlertSeverity.WARNING)
-        assert mock_bot.send_message.await_count == len(alerts.ADMIN_IDS)
+        assert mock_put.await_count == len(alerts.ADMIN_IDS)
 
     @pytest.mark.asyncio
-    @patch("monitor.alerts.bot")
-    async def test_send_critical_persists_pending_ack_and_markup(self, mock_bot, monkeypatch):
+    @patch("monitor.alerts.alert_queue.put_alert", new_callable=AsyncMock)
+    async def test_send_critical_persists_pending_ack_and_markup(self, mock_put, monkeypatch):
         from monitor import alerts
-        mock_bot.send_message = AsyncMock()
         monkeypatch.setattr(alerts, "is_alert_delivery_enabled", lambda: True)
         monkeypatch.setattr(alerts, "_check_mute", lambda: False)
         async def fake_to_thread(func, *a, **k):
@@ -415,7 +412,7 @@ class TestDeliveryAndDigest:
         monkeypatch.setattr(alerts.asyncio, "to_thread", fake_to_thread)
         await alerts.kirim_ke_semua_admin("router down", severity=alerts.AlertSeverity.CRITICAL, alert_key="down_router")
         assert "down_router" in alerts._pending_acks
-        kwargs = mock_bot.send_message.await_args.kwargs
+        kwargs = mock_put.await_args.kwargs
         assert kwargs["reply_markup"] is not None
         assert kwargs["parse_mode"] == "HTML"
 
@@ -433,17 +430,17 @@ class TestDeliveryAndDigest:
         mock_bot.send_message.assert_not_called()
 
     @pytest.mark.asyncio
-    @patch("monitor.alerts.bot")
-    async def test_send_logs_delivery_error_and_continues(self, mock_bot, monkeypatch):
+    @patch("monitor.alerts.alert_queue.put_alert", new_callable=AsyncMock)
+    async def test_send_logs_delivery_error_and_continues(self, mock_put, monkeypatch):
         from monitor import alerts
         calls = []
 
-        async def fake_send_message(**kwargs):
+        async def fake_put(**kwargs):
             calls.append(kwargs["chat_id"])
             if len(calls) == 1:
                 raise RuntimeError("boom")
 
-        mock_bot.send_message = AsyncMock(side_effect=fake_send_message)
+        mock_put.side_effect = fake_put
         monkeypatch.setattr(alerts, "ADMIN_IDS", [1, 2], raising=False)
         monkeypatch.setattr(alerts, "is_alert_delivery_enabled", lambda: True)
         monkeypatch.setattr(alerts, "_check_mute", lambda: False)
@@ -454,10 +451,9 @@ class TestDeliveryAndDigest:
         assert calls == [1, 2]
 
     @pytest.mark.asyncio
-    @patch("monitor.alerts.bot")
-    async def test_send_uses_runtime_cfg_admin_ids_when_module_constant_unchanged(self, mock_bot, monkeypatch):
+    @patch("monitor.alerts.alert_queue.put_alert", new_callable=AsyncMock)
+    async def test_send_uses_runtime_cfg_admin_ids_when_module_constant_unchanged(self, mock_put, monkeypatch):
         from monitor import alerts
-        mock_bot.send_message = AsyncMock()
         monkeypatch.setattr(
             alerts, "ADMIN_IDS", list(alerts._IMPORTED_SNAPSHOT["ADMIN_IDS"]), raising=False
         )
@@ -470,13 +466,12 @@ class TestDeliveryAndDigest:
 
         monkeypatch.setattr(alerts.asyncio, "to_thread", fake_to_thread)
         await alerts.kirim_ke_semua_admin("warn", severity=alerts.AlertSeverity.INFO)
-        assert mock_bot.send_message.await_args.kwargs["chat_id"] == 99
+        assert mock_put.await_args.kwargs["chat_id"] == 99
 
     @pytest.mark.asyncio
-    @patch("monitor.alerts.bot")
-    async def test_send_digest_batches_recent_warnings(self, mock_bot, monkeypatch):
+    @patch("monitor.alerts.alert_queue.put_alert", new_callable=AsyncMock)
+    async def test_send_digest_batches_recent_warnings(self, mock_put, monkeypatch):
         from monitor import alerts
-        mock_bot.send_message = AsyncMock()
         monkeypatch.setattr(alerts, "is_alert_delivery_enabled", lambda: True)
         async def fake_to_thread(func, *a, **k):
             return func(*a, **k)
@@ -489,7 +484,7 @@ class TestDeliveryAndDigest:
             (time.time(), "warn-b", alerts.AlertSeverity.INFO),
         ])
         await alerts.send_digest()
-        mock_bot.send_message.assert_awaited()
-        sent_text = mock_bot.send_message.await_args.kwargs["text"]
+        mock_put.assert_awaited()
+        sent_text = mock_put.await_args.kwargs["text"]
         assert "ALERT DIGEST" in sent_text
         assert len(alerts._recent_alerts) == 0

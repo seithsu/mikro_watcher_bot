@@ -70,3 +70,27 @@ def reset_singletons():
         MikroTikConnection._last_limit_warning_ts = 0.0
     except Exception:
         pass
+
+
+@pytest.fixture(autouse=True)
+def clear_alert_queue_between_tests():
+    """Kosongkan antrean alert global antar-test.
+
+    core.alert_queue._queue adalah module-global yang hidup lintas test. Test
+    yang menge-enqueue via put_alert asli (mis. test escalation) akan menyisakan
+    pesan; pesan basi itu bisa ikut terkirim saat test lain menjalankan
+    alert_worker asli (post_init) -- bikin hitungan send_message meleset.
+    """
+    try:
+        import core.alert_queue as aq
+        while not aq._queue.empty():
+            aq._queue.get_nowait()
+    except Exception:
+        pass
+    yield
+    try:
+        import core.alert_queue as aq
+        while not aq._queue.empty():
+            aq._queue.get_nowait()
+    except Exception:
+        pass

@@ -102,8 +102,13 @@ class TestFirewallModule:
         mock_get_api.return_value = api
         api.path.return_value = fw
 
+        # Command word dikirim ke router: disable/enable + .id target.
         assert toggle_firewall_rule("*2", chain_type="nat", disabled=True) is True
-        fw.update.assert_called_once_with(**{".id": "*2", "disabled": "true"})
+        fw.assert_called_once_with("disable", **{".id": "*2"})
+
+        fw.reset_mock()
+        assert toggle_firewall_rule("*2", chain_type="nat", disabled=False) is True
+        fw.assert_called_once_with("enable", **{".id": "*2"})
 
     @patch("mikrotik.firewall.pool.get_api")
     def test_get_address_list_entries_filters_by_list_name(self, mock_get_api):
@@ -142,7 +147,7 @@ class TestFirewallModule:
         # BUG-1 FIX: return False saat IP sudah ada (hanya update komentar).
         # Caller bisa bedakan "baru diblokir" (True) vs "sudah ada" (False).
         assert block_ip("192.168.3.3", "manual", "auto_block") is False
-        addr_list.update.assert_called_once_with(**{".id": "*A", "comment": "manual"})
+        addr_list.assert_called_once_with("set", **{".id": "*A", "comment": "manual"})
         addr_list.add.assert_not_called()
 
     @patch("mikrotik.firewall.pool.get_api")
@@ -285,5 +290,10 @@ class TestSchedulerModule:
         assert rows[0]["id"] == "*1"
         assert rows[0]["disabled"] is True
 
+        # Command word enable/disable dikirim ke router (bukan .update).
         assert set_scheduler_status("*1", disabled=False) is True
-        sched_obj.update.assert_called_once_with(**{".id": "*1", "disabled": "false"})
+        sched_obj.assert_called_once_with("enable", **{".id": "*1"})
+
+        sched_obj.reset_mock()
+        assert set_scheduler_status("*1", disabled=True) is True
+        sched_obj.assert_called_once_with("disable", **{".id": "*1"})

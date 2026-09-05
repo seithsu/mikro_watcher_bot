@@ -496,7 +496,7 @@ class TestNetworkAdditionalPaths:
 
     @pytest.mark.asyncio
     @patch('handlers.network.catat')
-    @patch('mikrotik.find_free_ips', return_value={
+    @patch('handlers.network.find_free_ips', return_value={
         'free_count': 2,
         'free_ips': ['192.168.3.20', '192.168.3.21'],
         'total_hosts': 254,
@@ -765,7 +765,7 @@ class TestNetworkMoreBranches:
         assert "Gagal membuka menu scan" in update.effective_message.reply_text.call_args[0][0]
 
     @pytest.mark.asyncio
-    @patch('mikrotik.run_ip_scan', return_value=[])
+    @patch('handlers.network.run_ip_scan', return_value=[])
     async def test_do_scan_no_devices(self, mock_scan):
         from handlers.network import _do_scan
         update = _make_update()
@@ -779,7 +779,7 @@ class TestNetworkMoreBranches:
         loading_message.edit_text.assert_called_once()
 
     @pytest.mark.asyncio
-    @patch('mikrotik.run_ip_scan', side_effect=Exception("socket 10038"))
+    @patch('handlers.network.run_ip_scan', side_effect=Exception("socket 10038"))
     @patch('handlers.network.catat')
     async def test_do_scan_socket_error_message(self, mock_catat, mock_scan):
         from handlers.network import _do_scan
@@ -913,7 +913,7 @@ class TestNetworkMoreBranches:
         mock_do_freeip.assert_awaited_once_with(update, context, "192.168.3.0/24")
 
     @pytest.mark.asyncio
-    @patch('mikrotik.find_free_ips', return_value={
+    @patch('handlers.network.find_free_ips', return_value={
         'free_count': 1,
         'free_ips': ['192.168.3.20'],
         'total_hosts': 254,
@@ -940,7 +940,7 @@ class TestNetworkMoreBranches:
         message.reply_text.assert_not_called()
 
     @pytest.mark.asyncio
-    @patch('mikrotik.find_free_ips', side_effect=Exception("router down"))
+    @patch('handlers.network.find_free_ips', side_effect=Exception("router down"))
     @patch('handlers.network.catat')
     async def test_do_freeip_error_falls_back_to_reply(self, mock_catat, mock_find):
         from handlers.network import _do_freeip
