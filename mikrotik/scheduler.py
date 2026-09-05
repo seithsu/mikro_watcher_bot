@@ -38,5 +38,7 @@ def set_scheduler_status(sched_id: str, disabled: bool):
     """Enable atau disable scheduler entry."""
     api = pool.get_api()
     cmd = 'disable' if disabled else 'enable'
-    api.path('system', 'scheduler')(cmd, **{'.id': sched_id})
+    # tuple() wajib: lihat catatan di mikrotik/firewall.toggle_firewall_rule --
+    # response librouteros generator lazy, perintah baru terkirim saat di-iterasi.
+    tuple(api.path('system', 'scheduler')(cmd, **{'.id': sched_id}))
     return True

@@ -214,11 +214,15 @@ class MikroTikConnection:
             with self._global_lock:
                 self._prune_stale_counter()
                 if self._active_connections < max_conns:
+                    # FIX: Reserve the slot immediately to prevent race conditions!
+                    self._active_connections += 1
                     break
             if _wait_attempt == 0:
                 self._warn_limit_throttled(max_conns)
             time.sleep(0.5)
         else:
+            threads = [t.name for t in threading.enumerate()]
+            logger.error(f"librouteros: max connections reached ({max_conns}), request ditunda. Active threads: {threads}")
             raise RuntimeError(f"librouteros: max connections reached ({max_conns}), request ditunda")
 
         try:
@@ -226,16 +230,19 @@ class MikroTikConnection:
             self._local._api = api
             self._local._connected_at = time.time()
             self._local._reset_version_seen = self._reset_version
-            with self._global_lock:
-                self._prune_stale_counter()
-                self._active_connections += 1
             self._clear_connect_backoff()
             logger.info(f"librouteros: koneksi baru berhasil + login OK (Active: {self._active_connections})")
         except librouteros.exceptions.TrapError as e:
+            with self._global_lock:
+                if self._active_connections > 0:
+                    self._active_connections -= 1
             self._register_connect_failure(e)
             logger.error(f"librouteros login gagal (TrapError): {e}")
             raise
         except Exception as e:
+            with self._global_lock:
+                if self._active_connections > 0:
+                    self._active_connections -= 1
             self._register_connect_failure(e)
             logger.error(f"librouteros connect gagal: {e}")
             raise

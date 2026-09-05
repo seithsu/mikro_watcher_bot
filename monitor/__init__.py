@@ -61,6 +61,11 @@ async def main_async():
 
     loop.set_exception_handler(_loop_exception_handler)
 
+    from telegram import Bot
+    from core.alert_queue import alert_worker
+
+    bot = Bot(token=cfg.TOKEN)
+
     tasks = [
         asyncio.create_task(_run_task_with_startup_delay("system", task_monitor_system)),
         asyncio.create_task(_run_task_with_startup_delay("resources", task_monitor_resources)),
@@ -70,6 +75,7 @@ async def main_async():
         asyncio.create_task(_run_task_with_startup_delay("netwatch", task_monitor_netwatch)),
         asyncio.create_task(_run_task_with_startup_delay("dhcp_arp", task_monitor_dhcp_arp)),
         asyncio.create_task(_run_task_with_startup_delay("alert_maintenance", task_monitor_alert_maintenance)),
+        asyncio.create_task(alert_worker(bot)),
     ]
 
     def _signal_handler():

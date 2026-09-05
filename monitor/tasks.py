@@ -12,19 +12,22 @@ import re
 import socket
 import ipaddress
 import json
+import os
 from collections import deque
 from datetime import datetime
 from mikrotik.queue import format_rate_bps
 
 from telegram import InlineKeyboardMarkup, InlineKeyboardButton
 import core.config as cfg
-import core.alert_queue as alert_queue
 from mikrotik import (
     get_status, get_interfaces, get_traffic, get_mikrotik_log,
     get_dhcp_usage_count, get_dhcp_pool_capacity, get_arp_anomalies, get_active_arp_ip_set, block_ip, _pool
 )
+from mikrotik.network import (
+    set_interface_status, set_bridge_port_status, get_mac_learned_interface,
+)
 from .alerts import (
-    kirim_ke_semua_admin, with_timeout, bot, check_escalation, send_digest,
+    kirim_ke_semua_admin, kirim_operasional, with_timeout, bot, check_escalation, send_digest,
     AlertSeverity,
 )
 from .checks import (
@@ -51,6 +54,15 @@ _BACKGROUND_LOG_FETCH_HARD_CAP = 250
 _LAST_RUNTIME_RESET_SEEN = 0.0
 _rx_anomaly_state = {}  # iface_name -> state dict untuk deteksi RX packet anomali
 _rx_packet_counter_cache = {}  # iface_name -> {"rx_packet": int, "tx_packet": int, "ts": float}
+
+# ============ AUTO-ACTION RX (disable/enable interface) ============
+# State persistent: interface apa yang sedang sengaja di-disable oleh bot.
+# Dipakai supaya kalau bot/PM2 restart saat port masih off, port langsung
+# dicoba dinyalakan lagi (sebelumnya: port nyangkut off sampai manual).
+_AUTO_ACTION_STATE_FILE = cfg.DATA_DIR / "auto_action_state.json"
+_AUTO_ACTION_INFLIGHT = set()  # iface yang sedang ada task toggle/enable berjalan
+_AUTO_ACTION_SLOW_RETRY_SEC = 60
+_AUTO_ACTION_ALERT_ONCE_SEC = 900  # alert "masih off" maksimal 1x per 15 menit
 
 
 def clear_runtime_state():
@@ -1194,14 +1206,8 @@ async def task_monitor_logs():
                                             InlineKeyboardButton("✅ Unban / Buka Blokir", callback_data=f"unban_{ip_part}")
                                         ]])
 
-                                        for admin_id in cfg.ADMIN_IDS:
-                                            try:
-                                                await alert_queue.put_alert(chat_id=admin_id, text=pesan_block, parse_mode='HTML', reply_markup=btn)
-                                            except Exception as send_err:
-                                                logger.warning(
-                                                    "Gagal kirim notifikasi auto-block ke admin %s: %s",
-                                                    admin_id, send_err
-                                                )
+                                        # Lewat kirim_operasional agar gate/mute tetap dihormati.
+                                        await kirim_operasional(pesan_block, reply_markup=btn)
                                         logger.info(f"[SHIELD] IP {ip_part} blocked.")
                                     except Exception as be:
                                         logger.error(f"Gagal auto block ip {ip_part}: {be}")
@@ -1214,7 +1220,10 @@ async def task_monitor_logs():
                     # Filter topik penting untuk alert log standar
                     if (topic_tokens.intersection({'error', 'critical', 'warning', 'account'}) or is_queue_change) and not is_dhcp_pool_exhausted:
                         if not is_bot_ip:
-                            new_logs.append(l)
+                            # BUG FIX: append `lease` (loop var siklus ini), bukan `l`
+                            # (sisa loop baseline init) -- selama ini forward log router
+                            # selalu mengirim entri baseline terakhir, bukan log barunya.
+                            new_logs.append(lease)
                             if is_power_event:
                                 # Tandai sebagai sudah masuk new_logs (jangan kirim duplikat via power event handler)
                                 _power_events_sent[uid] = time.time()
@@ -1224,7 +1233,7 @@ async def task_monitor_logs():
                         _power_events_sent[uid] = time.time()
                         await kirim_ke_semua_admin(
                             f"⚡ <b>[POWER EVENT]</b>\n\n"
-                            f"⏰ {l.get('time', '')}\n"
+                            f"⏰ {lease.get('time', '')}\n"
                             f"📝 <code>{msg_text}</code>\n\n"
                             f"Terdeteksi event terkait power/UPS/voltage.",
                             parse_mode='HTML'
@@ -1247,13 +1256,8 @@ async def task_monitor_logs():
             # Kirim alert log umum
             if new_logs:
                 chunks = _build_router_log_chunks(new_logs)
-
-                for admin_id in cfg.ADMIN_IDS:
-                    for pesan in chunks:
-                        try:
-                            await alert_queue.put_alert(chat_id=admin_id, text=pesan, parse_mode='HTML')
-                        except Exception as send_err:
-                            logger.warning("Gagal forward log router ke admin %s: %s", admin_id, send_err)
+                for pesan in chunks:
+                    await kirim_operasional(pesan)
                 logger.debug(f"Forwarded {len(new_logs)} log entries")
 
         except asyncio.CancelledError:
@@ -1514,6 +1518,288 @@ def _estimate_pps_from_counter_delta(iface_name):
     return (int(rx_delta / dt), int(tx_delta / dt))
 
 
+# ============================================
+# AUTO-ACTION STATE (RX anomaly disable/enable)
+# ============================================
+
+def _load_auto_action_state():
+    """Baca file state interface yang sedang di-disable auto-action."""
+    try:
+        if _AUTO_ACTION_STATE_FILE.exists():
+            with open(_AUTO_ACTION_STATE_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if isinstance(data, dict):
+                return data
+    except (OSError, ValueError, TypeError) as e:
+        logger.debug("Gagal baca %s: %s", _AUTO_ACTION_STATE_FILE.name, e)
+    return {}
+
+
+def _save_auto_action_state(data):
+    """Simpan state auto-action secara atomik (tmp + os.replace)."""
+    try:
+        cfg.DATA_DIR.mkdir(parents=True, exist_ok=True)
+        tmp_path = str(_AUTO_ACTION_STATE_FILE) + ".tmp"
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            json.dump(data, f)
+        os.replace(tmp_path, str(_AUTO_ACTION_STATE_FILE))
+    except OSError as e:
+        logger.debug("Gagal simpan %s: %s", _AUTO_ACTION_STATE_FILE.name, e)
+
+
+def _mark_auto_action_off(ifname):
+    """Tandai iface sebagai sedang off karena auto-action (persisten)."""
+    state = _load_auto_action_state()
+    state[ifname] = {"state": "off", "since": time.time(), "reason": "rx_anomaly"}
+    _save_auto_action_state(state)
+
+
+def _clear_auto_action_off(ifname):
+    """Hapus penanda iface off (berhasil di-enable lagi / sudah tidak relevan)."""
+    state = _load_auto_action_state()
+    if ifname in state:
+        state.pop(ifname, None)
+        _save_auto_action_state(state)
+
+
+async def _try_enable_iface(ifname):
+    """Coba enable iface (port bridge dulu, fallback interface fisik).
+
+    Return True bila berhasil. Exception dari API di-catch di sini agar
+    loop pemulihan bisa menilai kegagalan tanpa crash.
+    """
+    try:
+        ok = bool(await asyncio.to_thread(set_bridge_port_status, ifname, False))
+        if ok:
+            return True
+    except Exception as e:
+        logger.debug("[RX_ANOMALY] enable bridge port %s gagal: %s", ifname, e)
+    try:
+        ok = bool(await asyncio.to_thread(set_interface_status, ifname, False))
+        return ok
+    except Exception as e:
+        logger.debug("[RX_ANOMALY] enable interface %s gagal: %s", ifname, e)
+        return False
+
+
+def _should_skip_auto_action(ifname, learned_iface, protect=True):
+    """Keputusan murni (tanpa I/O): apakah disable harus dibatalkan.
+
+    Logika: kalau proteksi jalur bot aktif dan target disable adalah port
+    tempat MAC bot dipelajari router, disable dibatalkan. Kalau jalur bot
+    tidak bisa dipastikan (learned_iface None), kita pilih fail-safe: jangan
+    ambil risiko memutus jalur manajemen sendiri -- disable bisa membuat bot
+    putus dari API dan tidak bisa enable lagi (bug yang pernah terjadi).
+
+    Args:
+        ifname: interface yang mau di-disable.
+        learned_iface: port hasil resolve MAC bot (None = tidak diketahui).
+        protect: apakah proteksi dinyalakan (RX_ANOMALY_AUTO_ACTION_PROTECT_BOT_LINK).
+    """
+    if not protect:
+        return False
+    if not learned_iface:
+        return True
+    return str(learned_iface).strip().lower() == str(ifname).strip().lower()
+
+
+async def _is_auto_action_blocked(ifname):
+    """Guard runtime: cek apakah ifname membawa jalur koneksi bot sendiri.
+
+    Hanya aktif bila RX_ANOMALY_AUTO_ACTION_PROTECT_BOT_LINK=true dan BOT_IP
+    terisi. Kalau guard tak bisa memastikan jalur bot, disable DIBATALKAN
+    (fail-safe) dan operator diberi tahu lewat notifikasi operasional.
+    """
+    protect = bool(getattr(cfg, "RX_ANOMALY_AUTO_ACTION_PROTECT_BOT_LINK", False))
+    bot_ip = str(getattr(cfg, "BOT_IP", "") or "").strip()
+    if not protect or not bot_ip:
+        return False
+
+    try:
+        learned = await asyncio.to_thread(get_mac_learned_interface, bot_ip)
+    except Exception as e:
+        logger.warning(
+            "[RX_ANOMALY] Gagal verifikasi jalur bot (%s); disable %s dibatalkan (fail-safe).",
+            e, ifname,
+        )
+        return True
+
+    if _should_skip_auto_action(ifname, learned):
+        if learned:
+            logger.warning(
+                "[RX_ANOMALY] %s adalah jalur koneksi bot sendiri (MAC bot dipelajari di port ini). "
+                "Disable DIBATALKAN supaya bot tidak putus dari API.",
+                ifname,
+            )
+            alasan = (
+                f"port ini adalah jalur koneksi bot ke router "
+                f"(MAC bot dipelajari di sini)"
+            )
+        else:
+            logger.warning(
+                "[RX_ANOMALY] Jalur koneksi bot tidak bisa diverifikasi; disable %s dibatalkan (fail-safe). "
+                "Cek BOT_IP di .env atau matikan proteksi bila bot memonitor dari luar LAN.",
+                ifname,
+            )
+            alasan = (
+                f"jalur koneksi bot ke router tidak bisa diverifikasi (fail-safe)"
+            )
+        await kirim_operasional(
+            f"🛡️ <b>[AUTO-ACTION BLOCKED]</b>\n"
+            f"Anomali RX kritis terdeteksi di <code>{ifname}</code>, tapi {alasan}. "
+            f"Disable otomatis dibatalkan agar bot tidak memutus aksesnya sendiri. "
+            f"Perlu pengecekan manual di lapangan."
+        )
+        return True
+    return False
+
+
+async def _restore_auto_disabled_iface(ifname):
+    """Pulihkan iface yang di-disable auto-action sampai benar-benar nyala.
+
+    Fase cepat: retries pertama dengan interval pendek (biasanya API cuma
+    flaky sesaat saat storm). Kalau masih gagal, lanjut fase lambat tiap
+    60 detik sampai berhasil -- ini menggantikan kerja manual operator yang
+    dulu harus menunggu broadcast reda lalu enable sendiri.
+
+    Loop berhenti otomatis saat: enable sukses, atau iface tidak ada lagi
+    (nama berubah/dihapus) setelah beberapa kali percobaan di fase lambat.
+    """
+    if ifname in _AUTO_ACTION_INFLIGHT:
+        return
+    _AUTO_ACTION_INFLIGHT.add(ifname)
+    try:
+        fast_retries = max(1, int(getattr(cfg, "RX_ANOMALY_AUTO_ACTION_ENABLE_RETRIES", 12)))
+        fast_interval = max(5, int(getattr(cfg, "RX_ANOMALY_AUTO_ACTION_RETRY_INTERVAL_SEC", 20)))
+        last_alert_ts = 0.0
+        missing_strikes = 0
+        attempt = 0
+
+        while True:
+            attempt += 1
+            # Di fase lambat, jangan memaksa enable saat API sedang down --
+            # percobaan akan sia-sia dan menambah beban router.
+            if attempt > fast_retries:
+                try:
+                    healthy, _ = await _get_api_health_cached(cache_ttl=5)
+                except Exception:
+                    healthy = True  # health check rusak -> biarkan percobaan menentukan
+                if not healthy:
+                    await asyncio.sleep(_AUTO_ACTION_SLOW_RETRY_SEC)
+                    continue
+
+            ok = await _try_enable_iface(ifname)
+            if ok:
+                _clear_auto_action_off(ifname)
+                logger.warning("[RX_ANOMALY] %s berhasil dinyalakan kembali (attempt %d).", ifname, attempt)
+                await kirim_operasional(
+                    f"✅ <b>[AUTO-ACTION RECOVERED]</b> {ifname} berhasil dinyalakan "
+                    f"kembali setelah %d percobaan." % attempt
+                )
+                return True
+
+            # Enable "berhasil dipanggil tapi return False" bisa berarti iface
+            # sudah tidak ada (rename/hapus). Jangan loop selamanya untuk itu.
+            if attempt > fast_retries:
+                missing_strikes += 1
+                if missing_strikes >= 5:
+                    logger.warning(
+                        "[RX_ANOMALY] %s tidak kunjung bisa di-enable setelah %d percobaan -- "
+                        "mungkin sudah dihapus/rename. State dibersihkan.",
+                        ifname, attempt,
+                    )
+                    _clear_auto_action_off(ifname)
+                    return False
+
+            now = time.time()
+            if attempt == fast_retries:
+                # Transisi ke fase lambat: kabari operator sekali saja.
+                await kirim_operasional(
+                    f"⚠️ <b>[AUTO-ACTION]</b> {ifname} masih disable setelah %d percobaan cepat. "
+                    f"Bot akan terus mencoba menyalakan otomatis setiap ~%ds sampai jaringan pulih. "
+                    f"Kemungkinan broadcast/API masih bermasalah." % (attempt, _AUTO_ACTION_SLOW_RETRY_SEC)
+                )
+                last_alert_ts = now
+            elif (now - last_alert_ts) >= _AUTO_ACTION_ALERT_ONCE_SEC:
+                logger.warning(
+                    "[RX_ANOMALY] %s masih off (attempt %d); retry lambat berlanjut.", ifname, attempt
+                )
+                last_alert_ts = now
+
+            if attempt >= fast_retries:
+                await asyncio.sleep(_AUTO_ACTION_SLOW_RETRY_SEC)
+            else:
+                await asyncio.sleep(fast_interval)
+    except asyncio.CancelledError:
+        raise
+    finally:
+        _AUTO_ACTION_INFLIGHT.discard(ifname)
+
+
+async def _reconcile_stuck_auto_actions():
+    """Startup recovery: enable kembali iface yang tertinggal off.
+
+    Dipanggil sekali saat task_monitor_traffic mulai. Kasus nyata: bot sempat
+    disable ether3 lalu proses restart/API putus sebelum sempat enable -- tanpa
+    ini port bakal nyangkut off sampai ada yang turun manual ke lapangan.
+    """
+    stuck = _load_auto_action_state()
+    if not stuck:
+        return
+    logger.warning("[RX_ANOMALY] Startup: %d iface masih off dari auto-action sebelumnya: %s",
+                   len(stuck), ", ".join(sorted(stuck.keys())))
+    for ifname in list(stuck.keys()):
+        asyncio.create_task(_restore_auto_disabled_iface(ifname))
+
+
+async def _auto_toggle_and_restore(ifname, off_duration):
+    """Alur auto-action lengkap: guard -> disable -> restore (dengan retry).
+
+    Sebelum disable, cek proteksi jalur bot. Setelah periode off, iface
+    dipulihkan lewat _restore_auto_disabled_iface yang retry sampai sukses,
+    bukan sekali coba lalu menyerah (perilaku lama yang membuat port nyangkut).
+    """
+    if ifname in _AUTO_ACTION_INFLIGHT:
+        logger.debug("[RX_ANOMALY] toggle %s dilewati: sudah ada task restore berjalan.", ifname)
+        return
+
+    if await _is_auto_action_blocked(ifname):
+        return
+
+    logger.warning("[RX_ANOMALY] Mematikan akses %s selama %ss karena anomali...", ifname, off_duration)
+    disabled = False
+    try:
+        try:
+            disabled = bool(await asyncio.to_thread(set_bridge_port_status, ifname, True))
+        except Exception as e:
+            logger.debug("[RX_ANOMALY] disable bridge port %s gagal: %s", ifname, e)
+        if not disabled:
+            try:
+                disabled = bool(await asyncio.to_thread(set_interface_status, ifname, True))
+            except Exception as e:
+                logger.debug("[RX_ANOMALY] disable interface %s gagal: %s", ifname, e)
+    except Exception as e:
+        logger.error("[RX_ANOMALY] Gagal disable %s: %s", ifname, e)
+        return
+
+    if not disabled:
+        logger.error("[RX_ANOMALY] %s tidak bisa di-disable (port/interface tidak ditemukan?).", ifname)
+        await kirim_operasional(
+            f"❌ <b>[AUTO-ACTION FAILED]</b> Tidak bisa me-disable <code>{ifname}</code>. "
+            f"Periksa apakah port/interface masih ada di router."
+        )
+        return
+
+    _mark_auto_action_off(ifname)
+    await kirim_operasional(
+        f"⚠️ <b>[AUTO-ACTION]</b> Mematikan (disable) sementara {ifname} "
+        f"karena anomali trafik tinggi."
+    )
+
+    await asyncio.sleep(off_duration)
+    await _restore_auto_disabled_iface(ifname)
+
+
 async def _run_rx_anomaly_detection(active_ifaces, traffic_results, all_interfaces=None):
     """Engine stateful untuk deteksi anomali RX Packet pada interface yang dimonitor.
 
@@ -1524,10 +1810,10 @@ async def _run_rx_anomaly_detection(active_ifaces, traffic_results, all_interfac
                         packet counter delta saat monitor-traffic timeout.
     """
     now = time.time()
-    # Case-insensitive watch list agar match nama interface di router (misal LOCAL vs local)
+    # Case-insensitive watch list agar match nama interface di router (misal LOCAL vs local).
+    # Daftar interface sepenuhnya dari config (RX_ANOMALY_WATCH_IFACE) -- tidak ada lagi
+    # force-add eth3/ether3 di sini; default config sudah memuat keduanya.
     watch_ifaces = {x.lower() for x in (getattr(cfg, 'RX_ANOMALY_WATCH_IFACE', ['local', 'eth3', 'ether3']) or ['local', 'eth3', 'ether3'])}
-    watch_ifaces.add('eth3')
-    watch_ifaces.add('ether3')
     consecutive_hits = max(1, int(cfg.RX_ANOMALY_CONSECUTIVE_HITS))
     recovery_hits = max(1, int(cfg.RX_ANOMALY_RECOVERY_HITS))
     cooldown_sec = max(0, int(cfg.RX_ANOMALY_COOLDOWN_SEC))
@@ -1627,52 +1913,25 @@ async def _run_rx_anomaly_detection(active_ifaces, traffic_results, all_interfac
                         ])
                 reply_markup = InlineKeyboardMarkup(buttons) if buttons else None
 
-                for admin_id in cfg.ADMIN_IDS:
-                    try:
-                        await alert_queue.put_alert(
-                            chat_id=admin_id,
-                            text=f"🔴 [{now_timestamp()}] {msg}",
-                            parse_mode='HTML',
-                            reply_markup=reply_markup,
-                        )
-                    except Exception as send_err:
-                        logger.warning("Gagal kirim RX anomaly alert ke admin %s: %s", admin_id, send_err)
+                await kirim_operasional(
+                    f"🔴 [{now_timestamp()}] {msg}",
+                    reply_markup=reply_markup,
+                )
 
                 state["last_level"] = "critical"
                 state["last_alert_ts"] = now
-                
-                if iface_name.lower() in ('eth3', 'ether3'):
-                    async def _disable_enable_eth3(ifname):
-                        try:
-                            from mikrotik.network import set_interface_status, set_bridge_port_status
-                            logger.warning("[RX_ANOMALY] Mematikan akses %s selama 5 detik karena anomali...", ifname)
-                            success = await asyncio.to_thread(set_bridge_port_status, ifname, True)
-                            if not success:
-                                logger.warning("[RX_ANOMALY] Interface %s bukan port bridge, mematikan interface fisik...", ifname)
-                                await asyncio.to_thread(set_interface_status, ifname, True)
-                            
-                            for admin_id in cfg.ADMIN_IDS:
-                                try:
-                                    await alert_queue.put_alert(chat_id=admin_id, text=f"⚠️ <b>[AUTO-ACTION]</b> Mematikan (disable) sementara {ifname} karena anomali trafik tinggi.", parse_mode='HTML')
-                                except Exception:
-                                    pass
 
-                            await asyncio.sleep(5)
-                            
-                            logger.warning("[RX_ANOMALY] Menghidupkan kembali %s...", ifname)
-                            if success:
-                                await asyncio.to_thread(set_bridge_port_status, ifname, False)
-                            else:
-                                await asyncio.to_thread(set_interface_status, ifname, False)
-                                
-                            for admin_id in cfg.ADMIN_IDS:
-                                try:
-                                    await alert_queue.put_alert(chat_id=admin_id, text=f"✅ <b>[AUTO-ACTION]</b> Menghidupkan (enable) kembali {ifname}.", parse_mode='HTML')
-                                except Exception:
-                                    pass
-                        except Exception as e:
-                            logger.error("[RX_ANOMALY] Gagal toggle akses %s: %s", ifname, e)
-                    asyncio.create_task(_disable_enable_eth3(iface_name))
+                # Auto-action: matikan-nyalakan interface yang terdaftar di config.
+                # Dulu hard-coded eth3/ether3; sekarang RX_ANOMALY_AUTO_ACTION_*.
+                # Sebelum disable ada guard jalur bot; setelah disable, restore
+                # di-retry otomatis sampai sukses (bukan sekali lalu nyangkut).
+                auto_action_ifaces = {
+                    x.lower() for x in (getattr(cfg, 'RX_ANOMALY_AUTO_ACTION_IFACE', []) or [])
+                }
+                if (bool(getattr(cfg, 'RX_ANOMALY_AUTO_ACTION_ENABLED', False))
+                        and iface_name.lower() in auto_action_ifaces):
+                    duration = max(1, int(getattr(cfg, 'RX_ANOMALY_AUTO_ACTION_DURATION_SEC', 5)))
+                    asyncio.create_task(_auto_toggle_and_restore(iface_name, duration))
             continue
 
         if level == "warning":
@@ -1706,16 +1965,10 @@ async def _run_rx_anomaly_detection(active_ifaces, traffic_results, all_interfac
                         ])
                 reply_markup = InlineKeyboardMarkup(buttons) if buttons else None
 
-                for admin_id in cfg.ADMIN_IDS:
-                    try:
-                        await alert_queue.put_alert(
-                            chat_id=admin_id,
-                            text=f"🟡 [{now_timestamp()}] {msg}",
-                            parse_mode='HTML',
-                            reply_markup=reply_markup,
-                        )
-                    except Exception as send_err:
-                        logger.warning("Gagal kirim RX anomaly warning ke admin %s: %s", admin_id, send_err)
+                await kirim_operasional(
+                    f"🟡 [{now_timestamp()}] {msg}",
+                    reply_markup=reply_markup,
+                )
 
                 state["last_level"] = "warning"
                 state["last_alert_ts"] = now
@@ -1773,6 +2026,11 @@ async def task_monitor_traffic():
     _TRAFFIC_INTERVAL = 60  # detik - 5x lebih sering dari system task (5 menit)
     logger.info(f"[INIT] Traffic Monitor berjalan (Interval: {_TRAFFIC_INTERVAL}s)")
 
+    # Startup recovery: kalau bot sempat restart saat ada port yang masih off
+    # karena auto-action (mis. disable ether3 lalu API putus sebelum enable),
+    # port tsb dicoba dinyalakan lagi di background.
+    await _reconcile_stuck_auto_actions()
+
     while True:
         try:
             logger.info("[traffic] siklus dimulai - step 1: runtime check")
@@ -1827,9 +2085,7 @@ async def task_monitor_traffic():
             if cfg.RX_ANOMALY_ENABLED:
 
                 try:
-                    rx_watch_set = {x.lower() for x in (getattr(cfg, 'RX_ANOMALY_WATCH_IFACE', ['local', 'ether3']) or ['local', 'ether3'])}
-                    rx_watch_set.add('eth3')
-                    rx_watch_set.add('ether3')
+                    rx_watch_set = {x.lower() for x in (getattr(cfg, 'RX_ANOMALY_WATCH_IFACE', ['local', 'eth3', 'ether3']) or ['local', 'eth3', 'ether3'])}
                     active_names_lower = {str(i.get('name', '')).strip().lower() for i in active_ifaces}
                     rx_extra_ifaces = [
                         iface for iface in interfaces

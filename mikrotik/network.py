@@ -422,6 +422,54 @@ def get_active_arp_ip_set():
     return active_ips
 
 
+@cached(ttl=10)
+@with_retry
+def get_mac_learned_interface(ip_address):
+    """Cari interface/port tempat MAC pemilik IP dipelajari oleh bridge router.
+
+    Dipakai sebagai guard auto-action RX anomaly: bot tidak boleh me-disable
+    port yang membawa jalur manajemennya sendiri. Kalau port itu di-disable,
+    bot putus dari API dan tidak akan pernah bisa menyalakannya kembali.
+
+    Strategi pencarian:
+    1. Ambil MAC dari tabel ARP (entri dynamic/complete) untuk IP tsb.
+    2. Cari MAC itu di `/interface bridge host` -> dapatkan port fisiknya.
+       (Lebih akurat dari field interface ARP, yang bisa cuma menunjuk arah
+       keluar router, bukan port L2 sebenarnya.)
+    3. Fallback ke field `interface` di ARP.
+
+    Return nama interface (string) atau None bila tidak ditemukan.
+    """
+    api = pool.get_api()
+
+    arp_interface = ""
+    mac = ""
+    for arp in list(api.path('ip', 'arp')):
+        if arp.get('address') == str(ip_address):
+            mac = str(arp.get('mac-address', '') or '').strip()
+            arp_interface = str(arp.get('interface', '') or '').strip()
+            break
+
+    if mac:
+        try:
+            hosts = list(api.path('interface', 'bridge', 'host'))
+            for host in hosts:
+                host_mac = str(host.get('mac-address', '') or '').strip()
+                if host_mac and host_mac.upper() == mac.upper():
+                    port = str(host.get('port', '') or '').strip()
+                    if port:
+                        return port
+                    on_iface = str(host.get('on-interface', '') or '').strip()
+                    if on_iface:
+                        return on_iface
+        except Exception as e:
+            # Bridge host tidak aktif/bridge tidak punya tabel host --
+            # fallback ke field interface di ARP.
+            logger.debug("bridge host lookup gagal, fallback ARP: %s", e)
+
+    return arp_interface or None
+
+
 @with_retry
 def get_mikrotik_log(lines=20):
     """Ambil tail log router dengan payload minimum + cache pendek."""

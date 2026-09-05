@@ -535,6 +535,42 @@ async def kirim_ke_semua_admin(pesan, parse_mode=None, severity=AlertSeverity.WA
     return delivered
 
 
+async def kirim_operasional(pesan, parse_mode='HTML', reply_markup=None):
+    """Kirim notifikasi operasional ke semua admin.
+
+    Dipakai untuk pesan yang bukan alert monitoring biasa: notifikasi auto-block,
+    auto-action (disable/enable interface), dan forward log router.
+
+    Bedanya dengan kirim_ke_semua_admin: tidak lewat digest batching dan tidak
+    masuk pending-ACK/escalation (pesan ini bentuknya sudah final, bukan alarm
+    yang butuh acknowledge). Gate global dan mute TETAP dihormati -- dulu path
+    ini langsung put_alert sehingga notifikasi bisa bocor saat maintenance mute.
+
+    Pesan yang tertahan tetap dicatat di log agar ada jejaknya.
+    """
+    apply_runtime_reset_if_signaled()
+    if not await asyncio.to_thread(is_alert_delivery_enabled):
+        logger.info("[OPS-SUPPRESSED] gate alert off: %s", str(pesan)[:100])
+        return False
+    if await asyncio.to_thread(_check_mute):
+        logger.info("[OPS-SUPPRESSED] mute aktif: %s", str(pesan)[:100])
+        return False
+
+    delivered = False
+    for admin_id in list(_runtime_value("ADMIN_IDS", []) or []):
+        try:
+            await alert_queue.put_alert(
+                chat_id=admin_id,
+                text=pesan,
+                parse_mode=parse_mode,
+                reply_markup=reply_markup,
+            )
+            delivered = True
+        except Exception as e:
+            logger.warning(f"Gagal kirim notifikasi operasional ke {admin_id}: {e}")
+    return delivered
+
+
 async def check_escalation():
     """Check dan kirim escalation untuk CRITICAL alerts yang belum di-ack."""
     apply_runtime_reset_if_signaled()

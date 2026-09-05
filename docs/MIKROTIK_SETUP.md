@@ -79,8 +79,9 @@ Pastikan IP lokal disesuaikan dengan segmen LAN Anda.
 Fitur proteksi (Auto-Block) bot secara cerdas memblokir IP *hacker* menggunakan **Address List**. Pastikan MikroTik Anda men- *drop* koneksi dari IP yang masuk ke daftar tersebut.
 
 ```routeros
-# Rule untuk memblokir siapapun yang ada di address list "blocked_by_bot"
-/ip firewall filter add action=drop chain=input src-address-list=blocked_by_bot comment="Drop IP Blocked by Mikro Watcher" place-before=0
+# Rule untuk memblokir siapapun yang ada di address list "auto_block"
+# (Nama list HARUS "auto_block" -- sama dengan default di mikrotik/firewall.py)
+/ip firewall filter add action=drop chain=input src-address-list=auto_block comment="Drop IP Blocked by Mikro Watcher" place-before=0
 ```
 
 ---

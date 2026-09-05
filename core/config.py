@@ -127,6 +127,9 @@ MIKROTIK_RESET_ALL_COOLDOWN_SEC = int(
         "MIKROTIK_RESET_ALL_COOLDOWN_SEC",
         "15").strip())
 ASYNC_THREAD_WORKERS = int(os.getenv("ASYNC_THREAD_WORKERS", "8").strip())
+# Hard limit async workers to max connections to prevent connection starvation
+if ASYNC_THREAD_WORKERS > MIKROTIK_MAX_CONNECTIONS:
+    ASYNC_THREAD_WORKERS = MIKROTIK_MAX_CONNECTIONS
 MIKROTIK_CONNECTION_MAX_AGE_SEC = int(
     os.getenv("MIKROTIK_CONNECTION_MAX_AGE_SEC", "0").strip())
 
@@ -285,11 +288,56 @@ RX_ANOMALY_COOLDOWN_SEC = int(
     os.getenv(
         "RX_ANOMALY_COOLDOWN_SEC",
         "900").strip())
+# Default ether3/eth3: port AP tamu yang dulu di-hard-code di tasks.py,
+# sekarang dipindah ke config agar perilaku site lama tetap terjaga.
 _rx_anomaly_iface_raw = os.getenv(
     "RX_ANOMALY_WATCH_IFACE",
-    "local,ether3").strip()
+    "local,eth3,ether3").strip()
 RX_ANOMALY_WATCH_IFACE = [x.strip()
                           for x in _rx_anomaly_iface_raw.split(",") if x.strip()]
+
+# Auto-action saat anomali RX kritis: matikan interface sesaat lalu nyalakan lagi.
+# Default ON + eth3/ether3 = perilaku site RS sebelumnya (dulu hard-coded).
+RX_ANOMALY_AUTO_ACTION_ENABLED = os.getenv(
+    "RX_ANOMALY_AUTO_ACTION_ENABLED",
+    "True").strip().lower() in [
+        'true',
+        '1',
+    'yes']
+_rx_auto_action_raw = os.getenv(
+    "RX_ANOMALY_AUTO_ACTION_IFACE",
+    "eth3,ether3").strip()
+RX_ANOMALY_AUTO_ACTION_IFACE = [x.strip()
+                                for x in _rx_auto_action_raw.split(",") if x.strip()]
+RX_ANOMALY_AUTO_ACTION_DURATION_SEC = int(
+    os.getenv(
+        "RX_ANOMALY_AUTO_ACTION_DURATION_SEC",
+        "5").strip())
+
+# Kebijakan re-enable setelah disable sementara gagal (API putus saat storm).
+# Enable dicoba ulang berkala, bukan sekali lalu menyerah -- supaya port tidak
+# nyangkut off sampai operator manual (kejadian lama: bot matikan ether3 lalu
+# tidak bisa enable karena jalur API-nya sendiri ikut terputus).
+RX_ANOMALY_AUTO_ACTION_ENABLE_RETRIES = int(
+    os.getenv(
+        "RX_ANOMALY_AUTO_ACTION_ENABLE_RETRIES",
+        "12").strip())
+RX_ANOMALY_AUTO_ACTION_RETRY_INTERVAL_SEC = int(
+    os.getenv(
+        "RX_ANOMALY_AUTO_ACTION_RETRY_INTERVAL_SEC",
+        "20").strip())
+
+# Proteksi jalur manajemen bot: sebelum disable, bot cek dulu di port mana MAC-nya
+# dipelajari router (via BOT_IP). Kalau port target = jalur bot sendiri, disable
+# DIBATALKAN -- matikan ether3 yang membawa segmen PC bot = bot putus dari API dan
+# tidak akan pernah bisa menyalakannya lagi. Escape hatch: set false kalau bot
+# memonitor dari jaringan luar (BOT_IP tidak ada di ARP lokal router).
+RX_ANOMALY_AUTO_ACTION_PROTECT_BOT_LINK = os.getenv(
+    "RX_ANOMALY_AUTO_ACTION_PROTECT_BOT_LINK",
+    "True").strip().lower() in [
+        'true',
+        '1',
+    'yes']
 
 # Guardrail: crit tidak boleh di bawah warn
 if RX_ANOMALY_CRIT_PPS < RX_ANOMALY_WARN_PPS:
@@ -637,6 +685,12 @@ _assert_range("RX_ANOMALY_CONSECUTIVE_HITS",
               RX_ANOMALY_CONSECUTIVE_HITS, 1, 20)
 _assert_range("RX_ANOMALY_RECOVERY_HITS", RX_ANOMALY_RECOVERY_HITS, 1, 20)
 _assert_range("RX_ANOMALY_COOLDOWN_SEC", RX_ANOMALY_COOLDOWN_SEC, 0, 86_400)
+_assert_range("RX_ANOMALY_AUTO_ACTION_DURATION_SEC",
+              RX_ANOMALY_AUTO_ACTION_DURATION_SEC, 1, 300)
+_assert_range("RX_ANOMALY_AUTO_ACTION_ENABLE_RETRIES",
+              RX_ANOMALY_AUTO_ACTION_ENABLE_RETRIES, 1, 60)
+_assert_range("RX_ANOMALY_AUTO_ACTION_RETRY_INTERVAL_SEC",
+              RX_ANOMALY_AUTO_ACTION_RETRY_INTERVAL_SEC, 5, 300)
 _assert_range("DHCP_POOL_SIZE", DHCP_POOL_SIZE, 1, 1_000_000)
 _assert_range("DHCP_ALERT_THRESHOLD", DHCP_ALERT_THRESHOLD, 10, 100)
 _assert_range("REBOOT_COOLDOWN", REBOOT_COOLDOWN, 1, 86_400)
@@ -733,6 +787,12 @@ _OVERRIDABLE_KEYS = {
     'RX_ANOMALY_RECOVERY_HITS',
     'RX_ANOMALY_COOLDOWN_SEC',
     'RX_ANOMALY_WATCH_IFACE',
+    'RX_ANOMALY_AUTO_ACTION_ENABLED',
+    'RX_ANOMALY_AUTO_ACTION_IFACE',
+    'RX_ANOMALY_AUTO_ACTION_DURATION_SEC',
+    'RX_ANOMALY_AUTO_ACTION_ENABLE_RETRIES',
+    'RX_ANOMALY_AUTO_ACTION_RETRY_INTERVAL_SEC',
+    'RX_ANOMALY_AUTO_ACTION_PROTECT_BOT_LINK',
     'DAILY_REPORT_HOUR',
     'ALERT_ESCALATION_MINUTES',
     'ALERT_DIGEST_THRESHOLD',
@@ -786,6 +846,12 @@ _OVERRIDABLE_SCHEMA = {
     'RX_ANOMALY_RECOVERY_HITS': (int, 1, 20),
     'RX_ANOMALY_COOLDOWN_SEC': (int, 0, 86_400),
     'RX_ANOMALY_WATCH_IFACE': (str, None, None),
+    'RX_ANOMALY_AUTO_ACTION_ENABLED': (bool, None, None),
+    'RX_ANOMALY_AUTO_ACTION_IFACE': (str, None, None),
+    'RX_ANOMALY_AUTO_ACTION_DURATION_SEC': (int, 1, 300),
+    'RX_ANOMALY_AUTO_ACTION_ENABLE_RETRIES': (int, 1, 60),
+    'RX_ANOMALY_AUTO_ACTION_RETRY_INTERVAL_SEC': (int, 5, 300),
+    'RX_ANOMALY_AUTO_ACTION_PROTECT_BOT_LINK': (bool, None, None),
     'DAILY_REPORT_HOUR': (int, 0, 23),
     'ALERT_ESCALATION_MINUTES': (int, 1, 10_000),
     'ALERT_DIGEST_THRESHOLD': (int, 1, 10_000),
@@ -874,7 +940,8 @@ def reload_runtime_overrides(force=False, min_interval=5):
                 cast_val = _parse_runtime_bool(value)
             except ValueError:
                 continue
-        elif key in {'TOP_BW_ALERT_IGNORE_QUEUES', 'NETWATCH_IGNORE_HOSTS', 'RX_ANOMALY_WATCH_IFACE'}:
+        elif key in {'TOP_BW_ALERT_IGNORE_QUEUES', 'NETWATCH_IGNORE_HOSTS', 'RX_ANOMALY_WATCH_IFACE',
+                     'RX_ANOMALY_AUTO_ACTION_IFACE'}:
             cast_val = [x.strip()
                         for x in str(value or "").split(",") if x.strip()]
         elif key == 'NETWATCH_FAIL_THRESHOLD_OVERRIDES':

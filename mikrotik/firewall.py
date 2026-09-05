@@ -44,7 +44,10 @@ def toggle_firewall_rule(rule_id: str, chain_type: str = "filter", disabled: boo
     """Enable atau disable firewall rule."""
     api = pool.get_api()
     cmd = 'disable' if disabled else 'enable'
-    api.path('ip', 'firewall', chain_type)(cmd, **{'.id': rule_id})
+    # tuple() wajib: response librouteros adalah generator lazy, perintah baru
+    # benar-benar dikirim saat di-iterasi. Tanpa ini fungsi hanya return True
+    # tanpa mengubah rule apa pun di router.
+    tuple(api.path('ip', 'firewall', chain_type)(cmd, **{'.id': rule_id}))
     return True
 
 
@@ -92,7 +95,7 @@ def block_ip(ip_address: str, reason: str = "auto-block", list_name: str = "auto
     if existing:
         # IP sudah ada - hanya update komentar, bukan entri baru.
         # Return False agar caller bisa membedakan "baru diblokir" vs "sudah ada".
-        addr_list('set', **{'.id': existing[0].get('.id'), 'comment': reason})
+        tuple(addr_list('set', **{'.id': existing[0].get('.id'), 'comment': reason}))
         return False
 
     addr_list.add(list=list_name, address=ip_address, comment=reason)
